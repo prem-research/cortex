@@ -1,199 +1,387 @@
-# Agentic Memory 🧠
+# Cortex: Advanced Memory System for AI Agents
 
-A novel agentic memory system for LLM agents that can dynamically organize memories in an agentic way.
+Cortex is a sophisticated memory system designed for AI agents, enabling them to store, retrieve, and evolve information over time. It provides a cognitive architecture inspired by human memory, with distinct short-term and long-term memory systems working together to create a rich, interconnected knowledge base.
 
-## Introduction 🌟
+## 🧠 Key Features
 
-Large Language Model (LLM) agents have demonstrated remarkable capabilities in handling complex real-world tasks through external tool usage. However, to effectively leverage historical experiences, they require sophisticated memory systems. Traditional memory systems, while providing basic storage and retrieval functionality, often lack advanced memory organization capabilities.
+- **Multi-tier Memory Architecture**: Short-term memory (STM) for recent information and long-term memory (LTM) for persistent storage
+- **Smart Retrieval**: Context-aware semantic search using embeddings
+- **Memory Evolution**: Automatically establish connections between related memories
+- **Self-organizing Knowledge**: Memories evolve, merge, and develop relationships over time
+- **Multi-user Support**: Segregate memories by user and session
+- **Fast Processing**: Lightweight preprocessing for STM, deep processing for LTM
+- **Flexible Integration**: Easy to integrate with various LLM backends
 
-Our project introduces an innovative **Agentic Memory** system that revolutionizes how LLM agents manage and utilize their memories:
+## 🏗️ Architecture Overview
 
-<div align="center">
-  <img src="Figure/intro-a.jpg" alt="Traditional Memory System" width="600"/>
-  <img src="Figure/intro-b.jpg" alt="Our Proposed Agentic Memory" width="600"/>
-  <br>
-  <em>Comparison between traditional memory system (top) and our proposed agentic memory (bottom). Our system enables dynamic memory operations and flexible agent-memory interactions.</em>
-</div>
+Cortex implements a cognitive architecture based on how human memory works. Here's a high-level overview:
 
-> **Note:** This repository provides a memory system to facilitate agent construction. If you want to reproduce the results presented in our paper, please refer to: [https://github.com/WujiangXu/AgenticMemory](https://github.com/WujiangXu/AgenticMemory)
-
-For more details, please refer to our paper: [A-MEM: Agentic Memory for LLM Agents](https://arxiv.org/pdf/2502.12110)
-
-
-## Key Features ✨
-
-- 🔄 Dynamic memory organization based on Zettelkasten principles
-- 🔍 Intelligent indexing and linking of memories via ChromaDB
-- 📝 Comprehensive note generation with structured attributes
-- 🌐 Interconnected knowledge networks
-- 🧬 Continuous memory evolution and refinement
-- 🤖 Agent-driven decision making for adaptive memory management
-
-## Framework 🏗️
-
-<div align="center">
-  <img src="Figure/framework.jpg" alt="Agentic Memory Framework" width="800"/>
-  <br>
-  <em>The framework of our Agentic Memory system showing the dynamic interaction between LLM agents and memory components.</em>
-</div>
-
-## How It Works 🛠️
-
-When a new memory is added to the system:
-1. Generates comprehensive notes with structured attributes
-2. Creates contextual descriptions and tags
-3. Analyzes historical memories for relevant connections
-4. Establishes meaningful links based on similarities
-5. Enables dynamic memory evolution and updates
-
-## Results 📊
-
-Empirical experiments conducted on six foundation models demonstrate superior performance compared to existing SOTA baselines.
-
-## Getting Started 🚀
-
-1. Clone the repository:
-```bash
-git clone https://github.com/agiresearch/A-mem.git
-cd AgenticMemory
+```mermaid
+graph TD
+    subgraph Input
+        I[New Information] --> P[Processing]
+    end
+    
+    subgraph "Memory System"
+        P --> LP[Light Processor]
+        P --> DP[Deep Processor]
+        
+        subgraph "Short-Term Memory"
+            LP --> STM[STM Storage]
+        end
+        
+        subgraph "Long-Term Memory"
+            DP --> LTM[LTM Storage]
+        end
+        
+        STM --- EV[Evolution & Connections]
+        LTM --- EV
+    end
+    
+    subgraph Retrieval
+        Q[Query] --> R[Retrieval Processor]
+        STM --> R
+        LTM --> R
+        R --> Results[Results]
+    end
+    
+    style STM fill:#f9f,stroke:#333,stroke-width:2px
+    style LTM fill:#bbf,stroke:#333,stroke-width:2px
+    style EV fill:#bfb,stroke:#333,stroke-width:2px
 ```
 
-2. Install dependencies:
-Option 1: Using venv (Python virtual environment)
-```bash
-# Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-.venv\Scripts\activate     # Windows
+### 🔄 Memory Flow Process
 
-# Install dependencies
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent
+    participant STM as Short-Term Memory
+    participant LTM as Long-Term Memory
+    participant Processor
+    
+    User->>Agent: Provide new information
+    Agent->>Processor: Process content
+    Processor->>STM: Store with light processing
+    Processor->>LTM: Store with deep processing
+    
+    User->>Agent: Query for information
+    Agent->>STM: Search for relevant memories
+    Agent->>LTM: Search for relevant memories
+    STM-->>Agent: Return matches
+    LTM-->>Agent: Return matches
+    Agent->>Processor: Combine and rank results
+    Agent->>User: Respond with retrieved information
+    
+    loop Memory Evolution
+        STM->>Processor: Check for connections
+        LTM->>Processor: Check for connections
+        Processor->>STM: Update connections
+        Processor->>LTM: Update connections
+    end
+```
+
+## 📦 Components
+
+### Memory Tiers
+
+#### Short-Term Memory (STM)
+A fast, in-memory storage system for recent information with:
+- Limited capacity (configurable)
+- Quick access and lightweight processing
+- LRU (Least Recently Used) eviction policy
+
+#### Long-Term Memory (LTM)
+A persistent storage system using ChromaDB with:
+- Unlimited capacity
+- Deep semantic processing
+- Rich relationship metadata
+- Vector-based semantic search
+
+### Memory Notes
+
+Each memory is stored as a `MemoryNote` containing:
+- Core content
+- Metadata (context, keywords, tags)
+- Temporal information (creation and access timestamps)
+- Relationship links to other memories
+- Evolution history
+
+### Processors
+
+```mermaid
+flowchart LR
+    subgraph Input
+        content[Content] --> meta[Metadata]
+    end
+    
+    subgraph "Preprocessors"
+        meta --> LP[Light Processor]
+        meta --> DP[Deep Processor]
+        
+        LP --> lp_out[Basic Embedding + Keywords]
+        DP --> dp_out[LLM Analysis + Relationships]
+    end
+    
+    subgraph "Postprocessors"
+        query[Query] --> RP[Retrieval Processor]
+        context[Context] --> RP
+        
+        RP --> reranked[Context-aware Reranking]
+    end
+    
+    style LP fill:#f9f,stroke:#333,stroke-width:2px
+    style DP fill:#bbf,stroke:#333,stroke-width:2px
+    style RP fill:#bfb,stroke:#333,stroke-width:2px
+```
+
+#### Light Preprocessor
+Quick processing for STM with fast embedding generation and basic keyword extraction.
+
+#### Deep Preprocessor
+Thorough processing for LTM using an LLM to extract:
+- Keywords and key concepts
+- Contextual information
+- Categorical tags
+
+#### Retrieval Processor
+Post-processes search results for better relevance:
+- Context-aware reranking
+- Score adjustment based on context matching
+- Link resolution and exploration
+
+### Evolution System
+
+```mermaid
+flowchart TB
+    subgraph "Memory Evolution"
+        new[New Memory] --> rel[Find Related Memories]
+        rel --> dec{Evolution Decision}
+        
+        dec -->|Strengthen| conn[Create Connections]
+        dec -->|Update| upd[Update Metadata]
+        dec -->|Merge| mrg[Merge Memories]
+        
+        conn --> links[Bidirectional Links]
+        upd --> meta[Enhanced Metadata]
+        mrg --> combined[Combined Content]
+        
+        links --> fin[Evolved Memory Network]
+        meta --> fin
+        combined --> fin
+    end
+    
+    style dec fill:#f96,stroke:#333,stroke-width:2px
+    style fin fill:#9f6,stroke:#333,stroke-width:2px
+```
+
+The evolution system:
+- Analyzes relationships between memories
+- Establishes typed, weighted connections
+- Merges related or complementary memories
+- Updates metadata based on new insights
+- Creates a self-organizing knowledge network
+
+## 🚀 Getting Started
+
+### Installation
+
+```bash
+git clone https://github.com/biswaroop1547/cortex.git
+cd cortex
+
 pip install -r requirements.txt
 ```
 
-Option 2: Using Conda
-```bash
-# Create and activate conda environment
-conda create -n myenv python=3.9
-conda activate myenv
+### Basic Usage
 
-# Install dependencies
-pip install -r requirements.txt
-```
+Cortex has two primary operations: **storing memories** and **retrieving memories**. Here's how to use them:
 
-3. Usage Examples 💡
-
-Here's how to use the Agentic Memory system for basic operations:
+#### 1. Storing Memories
 
 ```python
-from memory_system import AgenticMemorySystem
+from cortex.memory_system import AgenticMemorySystem
 
-# Initialize the memory system 🚀
+# Initialize the memory system
 memory_system = AgenticMemorySystem(
-    model_name='all-MiniLM-L6-v2',  # Embedding model for ChromaDB
-    llm_backend="openai",           # LLM backend (openai/ollama)
-    llm_model="gpt-4o-mini"         # LLM model name
+    model_name='all-MiniLM-L6-v2',  # Embedding model
+    llm_backend="openai",           # LLM provider
+    llm_model="gpt-4o-mini",        # LLM model
+    stm_capacity=100                # STM capacity
 )
 
-# Add Memories ➕
-# Simple addition
-memory_id = memory_system.add_note("Deep learning neural networks")
-
-# Addition with metadata
+# Method 1: Add a memory with manual metadata
 memory_id = memory_system.add_note(
-    content="Machine learning project notes",
-    tags=["ml", "project"],
-    category="Research",
-    timestamp="202503021500"  # YYYYMMDDHHmm format
+    content="The sky is blue because of Rayleigh scattering of sunlight.",
+    context="Science",
+    tags=["physics", "optics", "atmosphere"]
 )
 
-# Read (Retrieve) Memories 📖
-# Get memory by ID
-memory = memory_system.read(memory_id)
-print(f"Content: {memory.content}")
-print(f"Tags: {memory.tags}")
-print(f"Context: {memory.context}")
-print(f"Keywords: {memory.keywords}")
+# Method 2: Add a memory with auto-generated metadata
+content = "Neural networks are computational systems inspired by the human brain, consisting of nodes (neurons) connected by weighted edges."
+# Auto-analyze the content to extract metadata
+metadata = memory_system.analyze_content(content)
 
-# Search memories
-results = memory_system.search_agentic("neural networks", k=5)
+# Store with auto-generated metadata
+memory_id = memory_system.add_note(
+    content=content,
+    # Metadata is automatically included:
+    # - keywords from metadata.get("keywords")
+    # - context from metadata.get("context")
+)
+
+# Store memory for a specific user/session
+memory_system.add_note(
+    content="User prefers dark mode for all interfaces",
+    user_id="user123",
+    session_id="session456"
+)
+```
+
+#### 2. Retrieving Memories
+
+```python
+# Basic memory retrieval by query
+results = memory_system.search_memory(
+    query="How do colors appear in the sky?",
+    limit=5
+)
+
+# Retrieve from specific memory source
+stm_results = memory_system.search_memory(
+    query="computational models",
+    memory_source="stm",  # Options: "stm", "ltm", "all"
+    limit=3
+)
+
+# Retrieve with context for better relevance
+context_results = memory_system.search_memory(
+    query="neural networks",
+    context="Computer Science",  # Provides context for better matching
+    limit=5
+)
+
+# Filter by tags
+filtered_results = memory_system.search_memory(
+    query="light scattering",
+    where_filter={"tags": {"$contains": "physics"}}
+)
+
+# User-specific retrieval
+user_results = memory_system.search_memory(
+    query="user preferences",
+    user_id="user123",
+    session_id="session456"
+)
+
 for result in results:
-    print(f"ID: {result['id']}")
     print(f"Content: {result['content']}")
-    print(f"Tags: {result['tags']}")
+    print(f"Score: {result['score']}")
+    print(f"Memory tier: {result['memory_tier']}")
     print("---")
-
-# Update Memories 🔄
-memory_system.update(memory_id, content="Updated content about deep learning")
-
-# Delete Memories ❌
-memory_system.delete(memory_id)
-
-# Memory Evolution 🧬
-# The system automatically evolves memories by:
-# 1. Finding semantic relationships using ChromaDB
-# 2. Updating metadata and context
-# 3. Creating connections between related memories
-# This happens automatically when adding or updating memories!
 ```
 
-### Advanced Features 🌟
+### Using the CLI
 
-1. **ChromaDB Vector Storage** 📦
-   - Efficient vector embedding storage and retrieval
-   - Fast semantic similarity search
-   - Automatic metadata handling
-   - Persistent memory storage
+Cortex includes a command-line interface for processing text files:
 
-2. **Memory Evolution** 🧬
-   - Automatically analyzes content relationships
-   - Updates tags and context based on related memories
-   - Creates semantic connections between memories
-
-3. **Flexible Metadata** 📋
-   - Custom tags and categories
-   - Automatic keyword extraction
-   - Context generation
-   - Timestamp tracking
-
-4. **Multiple LLM Backends** 🤖
-   - OpenAI (GPT-4, GPT-3.5)
-   - Ollama (for local deployment)
-
-### Best Practices 💪
-
-1. **Memory Creation** ✨:
-   - Provide clear, specific content
-   - Add relevant tags for better organization
-   - Let the system handle context and keyword generation
-
-2. **Memory Retrieval** 🔍:
-   - Use specific search queries
-   - Adjust 'k' parameter based on needed results
-   - Consider both exact and semantic matches
-
-3. **Memory Evolution** 🧬:
-   - Allow automatic evolution to organize memories
-   - Review generated connections periodically
-   - Use consistent tagging conventions
-
-4. **Error Handling** ⚠️:
-   - Always check return values
-   - Handle potential KeyError for non-existent memories
-   - Use try-except blocks for LLM operations
-
-## Citation 📚
-
-If you use this code in your research, please cite our work:
-
-```bibtex
-@article{xu2025mem,
-  title={A-mem: Agentic memory for llm agents},
-  author={Xu, Wujiang and Liang, Zujie and Mei, Kai and Gao, Hang and Tan, Juntao and Zhang, Yongfeng},
-  journal={arXiv preprint arXiv:2502.12110},
-  year={2025}
-}
+```bash
+python -m cortex.main --input-file data/knowledge.txt
 ```
 
-## License 📄
+You can also load pre-stored memories:
 
-This project is licensed under the MIT License. See LICENSE for details.
+```bash
+python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
+```
+
+## 🔧 Configuration
+
+Cortex can be configured in several ways:
+
+```python
+memory_system = AgenticMemorySystem(
+    model_name='all-MiniLM-L6-v2',  # Embedding model
+    llm_backend="openai",           # LLM provider (openai/ollama/etc)
+    llm_model="gpt-4o-mini",        # LLM model name
+    evo_threshold=100,              # Number of memories before evolution check
+    stm_capacity=100,               # STM capacity
+    api_key=None                    # API key for LLM service
+)
+```
+
+### Text Chunking Parameters
+
+When processing large text files:
+
+```python
+CHUNK_SIZE = 5000      # Characters per chunk
+CHUNK_OVERLAP = 200    # Overlap between chunks
+```
+
+## 🔍 Advanced Usage
+
+### Multi-user Support
+
+```python
+# Add memory for specific user/session
+memory_system.add_note(
+    content="User preference: dark mode",
+    user_id="user123",
+    session_id="session456"
+)
+
+# Search within user context
+results = memory_system.search_memory(
+    query="user preferences",
+    user_id="user123"
+)
+```
+
+### Filter-based Search
+
+```python
+results = memory_system.search_memory(
+    query="quantum physics",
+    where_filter={"tags": {"$contains": "physics"}}
+)
+```
+
+### Memory Evolution Control
+
+```python
+# Manually establish a link between memories
+memory_system.update(
+    "memory_id_1",
+    links={
+        "memory_id_2": {
+            "type": "supports",
+            "strength": 0.85,
+            "reason": "These concepts are directly related"
+        }
+    }
+)
+```
+
+## 🧪 Experimental Features
+
+### Memory Consolidation
+
+Memory consolidation runs periodically to improve the organization of memories:
+
+```python
+# Manually trigger consolidation
+memory_system.consolidate_memories()
+```
+
+### Multi-modal Support
+
+Coming soon: Support for image and audio memory types!
+
+## 📊 Performance Considerations
+
+For optimal performance:
+
+- Keep STM capacity appropriate for your use case (50-200 items)
+- Choose an embedding model that balances speed and quality
+- For large knowledge bases, consider sharding by user/session/context
