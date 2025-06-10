@@ -190,7 +190,7 @@ The evolution system:
 git clone https://github.com/biswaroop1547/cortex.git
 cd cortex
 
-pip install -r requirements.txt
+poetry install
 ```
 
 ### Basic Usage

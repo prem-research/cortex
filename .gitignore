@@ -172,3 +172,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# custom
+evaluation/results*/**
+evaluation/memory_state/**
+evaluation/dataset/**

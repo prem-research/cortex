@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "cortex"
+version = "0.1.0"
+description = "Cortex: Advanced Memory System for AI Agents"
+authors = ["biswaroop1547 <biswaroop08@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+sentence-transformers = "^2.2.2"
+chromadb = "^0.4.22"
+rank_bm25 = "^0.2.2"
+nltk = "^3.8.1"
+transformers = "^4.36.2"
+litellm = "^1.16.11"
+numpy = "^1.24.3"
+scikit-learn = "^1.3.2"
+openai = "^1.3.7"
+langchain = "^0.2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

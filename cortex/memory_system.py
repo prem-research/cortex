@@ -58,7 +58,7 @@ class MemoryNote:
         # Usage and evolution data
         self.retrieval_count = retrieval_count or 0
         self.evolution_history = evolution_history or []
-        
+
         # User and session data
         self.user_id = user_id
         self.session_id = session_id
@@ -231,7 +231,7 @@ class LongTermMemory(MemoryTier):
     def __init__(self, embedding_model: str = 'all-MiniLM-L6-v2'):
         super().__init__("long_term_memory")
         self.embedding_model = embedding_model
-        self.collections = {}
+        self.collections: Dict[str, ChromaRetriever] = {}
         self.lock = threading.RLock()
     
     def _get_collection_name(self, user_id: Optional[str], session_id: Optional[str]) -> str:
@@ -261,6 +261,12 @@ class LongTermMemory(MemoryTier):
         """Add a memory to long-term storage"""
         collection = self._get_collection(user_id, session_id)
         
+        # Ensure user_id and session_id are in metadata
+        if user_id is not None and "user_id" not in metadata:
+            metadata["user_id"] = user_id
+        if session_id is not None and "session_id" not in metadata:
+            metadata["session_id"] = session_id
+            
         collection.add_document(document=content, metadata=metadata, doc_id=memory_id)
         return memory_id
     
@@ -269,19 +275,16 @@ class LongTermMemory(MemoryTier):
         collection = self._get_collection(user_id, session_id)
         
         try:
-            where_conditions = []
+            # First try to get directly by ID - most efficient approach
+            results = collection.search(query="", k=1, where_filter={"id": {"$eq": memory_id}})
             
-            where_conditions.append({"id": {"$eq": memory_id}})
-            
-            if user_id is not None:
-                where_conditions.append({"user_id": {"$eq": user_id}})
-            
-            if session_id is not None:
-                where_conditions.append({"session_id": {"$eq": session_id}})
-            
-            where_filter = {"$and": where_conditions} if len(where_conditions) > 1 else where_conditions[0]
-            
-            results = collection.search(query="", k=1, where_filter=where_filter)
+            if not results or len(results) == 0:
+                # If not found, try other collections if user_id/session_id were specified
+                if user_id is not None or session_id is not None:
+                    # Try default collection as fallback
+                    default_collection = self._get_collection(None, None)
+                    if default_collection != collection:
+                        results = default_collection.search(query="", k=1, where_filter={"id": {"$eq": memory_id}})
             
             if results and len(results) > 0:
                 result = results[0]
@@ -303,8 +306,7 @@ class LongTermMemory(MemoryTier):
             where_conditions = []
             
             if where_filter:
-                for key, value in where_filter.items():
-                    where_conditions.append({key: {"$eq": value}})
+                where_conditions.append(where_filter)
             
             if user_id is not None:
                 where_conditions.append({"user_id": {"$eq": user_id}})
@@ -316,15 +318,52 @@ class LongTermMemory(MemoryTier):
             
             results = collection.search(query, k=limit, where_filter=chroma_where)
             
+            # If no results and we have a user_id but no session_id, try searching across all collections for this user
+            if user_id is not None and session_id is None and (not results or len(results) == 0):
+                logger.info(f"No results found in default collection for user {user_id}, searching across all collections")
+                all_results = []
+                
+                # Get all collection names that could contain this user's data
+                user_collections = [name for name in self.collections.keys() if user_id in name]
+                
+                for coll_name in user_collections:
+                    try:
+                        coll = self.collections[coll_name]
+                        user_results = coll.search(
+                            query, 
+                            k=limit, 
+                            where_filter={"user_id": {"$eq": user_id}}
+                        )
+                        all_results.extend(user_results)
+                    except Exception as e:
+                        logger.error(f"Error searching collection {coll_name}: {e}")
+                
+                # Sort by relevance (distance)
+                all_results.sort(key=lambda x: x.get("distance", 1.0))
+                results = all_results[:limit]
+            
             formatted_results = []
             for result in results:
-                formatted_results.append({
+                formatted_result = {
                     "id": result.get("id", ""),
                     "content": result.get("document", ""),
                     "distance": result.get("distance"),
                     "score": 1.0 - (result.get("distance") or 0),
-                    **(result.get("metadata") or {})
-                })
+                }
+                
+                # Process metadata separately to handle special fields
+                metadata = result.get("metadata", {})
+                for key, value in metadata.items():
+                    # Handle links specially - ensure they're converted from string to dict
+                    if key == "links" and isinstance(value, str):
+                        try:
+                            formatted_result[key] = json.loads(value)
+                        except json.JSONDecodeError:
+                            formatted_result[key] = {}
+                    else:
+                        formatted_result[key] = value
+                
+                formatted_results.append(formatted_result)
             
             return formatted_results
             
@@ -337,12 +376,25 @@ class LongTermMemory(MemoryTier):
         collection = self._get_collection(user_id, session_id)
         
         try:
-            collection.delete_document(memory_id)
-            return True
+            # Try to find the memory first to make sure we're deleting from the right collection
+            result = self.get(memory_id, user_id, session_id)
+            if result:
+                collection.delete_document(memory_id)
+                return True
+            return False
         except Exception as e:
             logger.error(f"Error deleting from LTM: {e}")
             return False
-
+    
+    def clear(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
+        """Clear memories for a specific user/session or all if none specified"""
+        try:
+            collection_name = self._get_collection_name(user_id, session_id)
+            with self.lock:
+                if collection_name in self.collections:
+                    self.collections[collection_name].clear()
+        except Exception as e:
+            logger.error(f"Error clearing collection: {e}")
 
 class LightPreprocessor:
     """Lightweight preprocessing for STM"""
@@ -456,13 +508,6 @@ class AgenticMemorySystem:
         self._model = None
         self._model_name = model_name
         
-        try:
-            temp_retriever = ChromaRetriever(collection_name="memories")
-            temp_retriever.client.reset()
-        except Exception as e:
-            logger.warning(f"Could not reset ChromaDB collection: {e}")
-        
-        self.retriever = ChromaRetriever(collection_name="memories")
         # * TODO: Temporal continuity (sequential memories of same event) - to be implemented later
         self._evolution_system_prompt = '''
                                 You are an AI memory evolution agent responsible for managing and evolving a knowledge base.
@@ -486,10 +531,15 @@ class AgenticMemorySystem:
                                    OR
                                    - The new memory and an existing memory contain highly similar or complementary information that should be merged (`merge_memories` action is possible).
                                    Set `should_evolve` to `True` if any of these conditions is met. Otherwise, set it to `False`.
+                                   ::IMPORTANT:: Set `should_evolve` to `True` only if a memory should really be evolved. Do not set it to true most of the time unless there's a very good and extremely confident reason. ::IMPORTANT::
 
                                 2. If `should_evolve` is `True`, specify the `actions`:
-                                   - **strengthen**: If connections should be made. Provide a list of connection objects. Each object must specify the 'id' of the neighbor memory (use the 'memory id' field from the neighbor description), the relationship 'type' (e.g., 'similar', 'causal', 'example', 'contradicts', 'extends', 'supports', 'refutes', 'prerequisite', 'related'), and a confidence 'strength' score (0.0 to 1.0). 
+                                   - **strengthen**: If connections should be made. Provide a list of connection objects. Each object must specify the 'id' of the neighbor memory (use the 'memory id' field from the neighbor description or the memory index value, not a made-up ID), the relationship 'type' (e.g., 'similar', 'causal', 'example', 'contradicts', 'extends', 'supports', 'refutes', 'prerequisite', 'related'), and a confidence 'strength' score (0.0 to 1.0). 
                                      IMPORTANT: Only suggest connections with strength >= 0.65 and only if a genuine, meaningful relationship exists. Do not force connections - it's better to have fewer high-quality links than many weak links. For each connection, include a brief 'reason' explaining why this connection is meaningful.
+                                     CRITICAL: When specifying the 'id' field, do NOT generate new random UUIDs. You MUST use either:
+                                     1. The memory index number (0, 1, 2, etc.) from the memory listing, which is the index prefixed to each memory in the neighbors
+                                     2. The exact memory id value that appears in the "memory id:" field of each neighbor memory
+                                     Never make up new memory IDs - only use IDs that are explicitly provided to you.
                                      Also, provide the potentially updated 'tags' for the *current* new memory note in `tags_to_update`.
                                    
                                    - **update_neighbor**: If neighbors should be updated. Provide the updated 'context' (max 2 lines, while keeping essence of original) strings in `new_context_neighborhood` and updated 'tags' lists in `new_tags_neighborhood` for the neighbors, in the same order they were presented. If a neighbor's context or tags are not updated, repeat the original values.
@@ -498,10 +548,7 @@ class AgenticMemorySystem:
                                      * Information is complementary or continuation/extension and would form a more coherent whole when combined
                                      * Same core subject/topic/event with distributed details across memories
                                      * Content has high semantic overlap
-                                     
-                                     :IMPORTANT: PRIORITIZE `merge_memories` over `strengthen` when source or possible target memory content is less than 500 words AND information is complementary and would form a more coherent whole when combined or when the memories are about the same subject/topic/event or there's a high semantic overlap. :IMPORTANT:
-                                     :IMPORTANT: If the source or possible target memory content is more than 500 words, then action type should NOT be `merge_memories` unless it's 'replace' strategy. :IMPORTANT:
-                                     
+                                                                          
                                      For each merge candidate, specify:
                                      * The 'id' of the memory to merge with (from 'memory id' field)
                                      * The 'merge_strategy': "combine" (take best from both), "augment" (keep primary but add details), "replace" (new memory supplants old)
@@ -599,35 +646,42 @@ class AgenticMemorySystem:
         self._process_through_tiers(note, user_id, session_id)
         
         evo_label, note = self.process_memory(note)
-        print("evo_label: ", evo_label)
+        print("\nevo_label: ", evo_label, "\n")
         
         if hasattr(note, 'merged') and note.merged:
-            print(f"Note was merged into existing memory: {note.merged_into}")
+            print(f"\nNote was merged into existing memory: {note.merged_into}\n")
             return note.merged_into
         
         self.memories[note.id] = note
         
-        metadata = {
-            "id": note.id,
-            "content": note.content,
-            "keywords": note.keywords,
-            "links": note.links,
-            "retrieval_count": note.retrieval_count,
-            "timestamp": note.timestamp,
-            "last_accessed": note.last_accessed,
-            "context": note.context,
-            "evolution_history": note.evolution_history,
-            "category": note.category,
-            "tags": note.tags,
-            "user_id": user_id,
-            "session_id": session_id
-        }
-        self.retriever.add_document(note.content, metadata, note.id)
-        
+        # Ensure the note is saved with any updated links
         if evo_label == True:
+            # Re-save to LTM with updated links
+            metadata = {
+                "id": note.id,
+                "content": note.content,
+                "keywords": note.keywords,
+                "links": note.links,
+                "retrieval_count": note.retrieval_count,
+                "timestamp": note.timestamp,
+                "last_accessed": note.last_accessed,
+                "context": note.context,
+                "evolution_history": note.evolution_history,
+                "category": note.category,
+                "tags": note.tags,
+                "user_id": user_id,
+                "session_id": session_id
+            }
+            self.ltm._get_collection(user_id, session_id).add_document(
+                document=note.content, 
+                metadata=metadata, 
+                doc_id=note.id
+            )
+            
             self.evo_cnt += 1
             if self.evo_cnt % self.evo_threshold == 0:
                 self.consolidate_memories()
+        
         return note.id
     
     def _process_through_tiers(self, note: MemoryNote, user_id: Optional[str] = None, 
@@ -743,9 +797,39 @@ class AgenticMemorySystem:
                 
             results.extend(ltm_results)
         
+        # Check if we have results
+        if not results and user_id:
+            logger.warning(f"No results found for user {user_id} - trying search without user filtering")
+            
+            # Try a general search without user filtering as a fallback
+            general_results = []
+            
+            if memory_source in ["ltm", "all"]:
+                ltm_general_results = self.ltm.search(
+                    query, 
+                    limit, 
+                    where_filter=where_filter,
+                    user_id=None,  # No user filtering
+                    session_id=None
+                )
+                for result in ltm_general_results:
+                    result["memory_tier"] = "ltm"
+                    
+                if apply_postprocessing and context:
+                    ltm_general_results = self.retrieval_processor.process(ltm_general_results, context)
+                    
+                general_results.extend(ltm_general_results)
+            
+            # Only use these results if we found nothing with the user filter
+            if general_results:
+                logger.info(f"Found {len(general_results)} results in general search without user filtering")
+                results = general_results
+        
+        # Deduplicate by memory ID, prioritizing STM results
         seen_ids = set()
         unique_results = []
         
+        # First add STM results
         for result in results:
             if result.get("memory_tier") == "stm":
                 memory_id = result.get("id")
@@ -753,6 +837,7 @@ class AgenticMemorySystem:
                     seen_ids.add(memory_id)
                     unique_results.append(result)
         
+        # Then add LTM results if not already seen
         for result in results:
             if result.get("memory_tier") == "ltm":
                 memory_id = result.get("id")
@@ -798,37 +883,48 @@ class AgenticMemorySystem:
     def clear_stm(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
         """Clear short-term memory for a specific user/session or all if none specified"""
         self.stm.clear(user_id, session_id)
-
+    
+    def clear_ltm(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
+        """Clear long-term memory for a specific user/session or all if none specified"""
+        self.ltm.clear(user_id, session_id)
+    
     def consolidate_memories(self):
-        """Consolidate memories: update retriever with new documents"""
-        content_hashes = {}
-        if hasattr(self.retriever, 'content_hashes'):
-            content_hashes = self.retriever.content_hashes
-            
-        self.retriever = ChromaRetriever(collection_name="memories")
-        
-        self.retriever.content_hashes = content_hashes
+        """Consolidate memories: re-add all memories to ensure they are in correct collections"""
+        # Group memories by user_id and session_id
+        memory_groups = {}
         
         for memory in self.memories.values():
             user_id = getattr(memory, 'user_id', None)
             session_id = getattr(memory, 'session_id', None)
+            key = (user_id, session_id)
             
-            metadata = {
-                "id": memory.id,
-                "content": memory.content,
-                "keywords": memory.keywords,
-                "links": memory.links,
-                "retrieval_count": memory.retrieval_count,
-                "timestamp": memory.timestamp,
-                "last_accessed": memory.last_accessed,
-                "context": memory.context,
-                "evolution_history": memory.evolution_history,
-                "category": memory.category,
-                "tags": memory.tags,
-                "user_id": user_id,
-                "session_id": session_id
-            }
-            self.retriever.add_document(memory.content, metadata, memory.id)
+            if key not in memory_groups:
+                memory_groups[key] = []
+            
+            memory_groups[key].append(memory)
+        
+        # Process each group separately
+        for (user_id, session_id), memories in memory_groups.items():
+            collection = self.ltm._get_collection(user_id, session_id)
+            
+            # Don't clear - just update existing memories
+            for memory in memories:
+                metadata = {
+                    "id": memory.id,
+                    "content": memory.content,
+                    "keywords": memory.keywords,
+                    "links": memory.links,
+                    "retrieval_count": memory.retrieval_count,
+                    "timestamp": memory.timestamp,
+                    "last_accessed": memory.last_accessed,
+                    "context": memory.context,
+                    "evolution_history": memory.evolution_history,
+                    "category": memory.category,
+                    "tags": memory.tags,
+                    "user_id": user_id,
+                    "session_id": session_id
+                }
+                collection.add_document(memory.content, metadata, memory.id)
     
     def find_related_memories(self, query: str, k: int = 5, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Tuple[str, List[str]]:
         """Find related memories using ChromaDB retrieval
@@ -846,6 +942,9 @@ class AgenticMemorySystem:
             return "", []
             
         try:
+            # Use the proper LTM collection based on user_id and session_id
+            ltm_collection = self.ltm._get_collection(user_id, session_id)
+            
             where_conditions = []
             
             if user_id is not None:
@@ -856,7 +955,7 @@ class AgenticMemorySystem:
             
             where_filter = {"$and": where_conditions} if len(where_conditions) > 1 else (where_conditions[0] if where_conditions else None)
             
-            results = self.retriever.search(query, k=k, where_filter=where_filter)
+            results = ltm_collection.search(query, k=k, where_filter=where_filter)
             
             memory_str = ""
             memory_ids = []
@@ -867,7 +966,6 @@ class AgenticMemorySystem:
                     continue
                     
                 metadata = result.get('metadata', {})
-                distance = result.get('distance', None)
                 
                 memory_str += f"memory index:{i}\tmemory id:{doc_id}\ttimestamp:{metadata.get('timestamp', '')}\tmemory content: {metadata.get('content', '')}\tmemory context: {metadata.get('context', '')}\tmemory keywords: {str(metadata.get('keywords', []))}\tmemory tags: {str(metadata.get('tags', []))}\n"
                 memory_ids.append(doc_id)
@@ -876,7 +974,7 @@ class AgenticMemorySystem:
         except Exception as e:
             logger.error(f"Error in find_related_memories: {str(e)}")
             return "", []
-
+    
     def update(self, memory_id: str, **kwargs) -> bool:
         """Update a memory note.
         
@@ -907,10 +1005,16 @@ class AgenticMemorySystem:
             "context": note.context,
             "evolution_history": note.evolution_history,
             "category": note.category,
-            "tags": note.tags
+            "tags": note.tags,
+            "user_id": getattr(note, 'user_id', None),
+            "session_id": getattr(note, 'session_id', None)
         }
         
-        self.retriever.add_document(document=note.content, metadata=metadata, doc_id=memory_id)
+        # Update in the correct LTM collection
+        user_id = getattr(note, 'user_id', None)
+        session_id = getattr(note, 'session_id', None)
+        ltm_collection = self.ltm._get_collection(user_id, session_id)
+        ltm_collection.add_document(document=note.content, metadata=metadata, doc_id=memory_id)
         
         return True
     
@@ -924,7 +1028,17 @@ class AgenticMemorySystem:
             bool: True if memory was deleted, False if not found
         """
         if memory_id in self.memories:
-            self.retriever.delete_document(memory_id)
+            note = self.memories[memory_id]
+            user_id = getattr(note, 'user_id', None)
+            session_id = getattr(note, 'session_id', None)
+            
+            # Delete from LTM using the correct collection
+            self.ltm._get_collection(user_id, session_id).delete_document(memory_id)
+            
+            # Also delete from STM
+            self.stm.delete(memory_id, user_id, session_id)
+            
+            # Delete from memory dictionary
             del self.memories[memory_id]
             return True
         return False
@@ -941,18 +1055,26 @@ class AgenticMemorySystem:
         if not self.memories:
             return False, note
             
+        # Skip evolution for very large content (likely batched data)
+        # TODO: Implement evolution for large batched content
+        if len(note.content) > 10000:
+            logger.info("Skipping evolution for large batched content")
+            return False, note
+            
         try:
             user_id = getattr(note, 'user_id', None)
             session_id = getattr(note, 'session_id', None)
             
-            neighbors_text, neighbor_memory_ids = self.find_related_memories(note.content, k=5, user_id=user_id, session_id=session_id)
+            logger.info(f"Processing memory for user: {user_id}, session: {session_id}")
+            
+            neighbors_text, neighbor_memory_ids = self.find_related_memories(note.content, k=4, user_id=user_id, session_id=session_id)
             
             if not neighbors_text or not neighbor_memory_ids:
                 return False, note
                
             logger.info(f"Processing memory with content: {note.content[:100]}...")
             logger.info(f"Found {len(neighbor_memory_ids)} neighbors for potential evolution")
-                
+            
             prompt = self._evolution_system_prompt.format(
                 content=note.content,
                 context=note.context,
@@ -1073,10 +1195,23 @@ class AgenticMemorySystem:
                                         if 0 <= idx < len(neighbor_memory_ids):
                                             target_memory_id = neighbor_memory_ids[idx]
                                     elif self._is_valid_uuid(conn_id_str):
-                                         if conn_id_str in self.memories:
-                                             target_memory_id = conn_id_str
-                                         else:
-                                             logger.warning(f"LLM suggested connection to non-existent memory ID: {conn_id_str}")
+                                        # Only check in neighbor_memory_ids to avoid connecting to memories from different users/sessions
+                                        if conn_id_str in neighbor_memory_ids:
+                                            target_memory_id = conn_id_str
+                                        elif conn_id_str in self.memories:
+                                            # Additional check: only connect if user_id and session_id match
+                                            target_memory = self.memories[conn_id_str]
+                                            target_user_id = getattr(target_memory, 'user_id', None)
+                                            target_session_id = getattr(target_memory, 'session_id', None)
+                                            note_user_id = getattr(note, 'user_id', None)
+                                            note_session_id = getattr(note, 'session_id', None)
+                                            
+                                            if target_user_id == note_user_id and target_session_id == note_session_id:
+                                                target_memory_id = conn_id_str
+                                            else:
+                                                logger.warning(f"Skipping connection to memory {conn_id_str} due to user/session mismatch")
+                                        else:
+                                            logger.warning(f"LLM suggested connection to non-existent memory ID: {conn_id_str}")
 
                                 if target_memory_id and target_memory_id != note.id:
                                     note.links[target_memory_id] = {
@@ -1085,6 +1220,8 @@ class AgenticMemorySystem:
                                         'timestamp': current_time_iso,
                                         'reason': conn_reason
                                     }
+                                    
+                                    logger.info(f"Added link from {note.id} to {target_memory_id}: {note.links[target_memory_id]}")
                                     
                                     neighbor_note = self.memories.get(target_memory_id)
                                     if neighbor_note:
@@ -1100,6 +1237,38 @@ class AgenticMemorySystem:
                                             'timestamp': current_time_iso,
                                             'reason': f"Reciprocal of: {conn_reason}"
                                         }
+                                        
+                                        logger.info(f"Added reciprocal link from {target_memory_id} to {note.id}: {neighbor_note.links[note.id]}")
+                                        
+                                        # Important: Update the neighbor in its correct collection
+                                        neighbor_user_id = getattr(neighbor_note, 'user_id', None)
+                                        neighbor_session_id = getattr(neighbor_note, 'session_id', None)
+                                        
+                                        neighbor_metadata = {
+                                            "id": neighbor_note.id,
+                                            "content": neighbor_note.content,
+                                            "keywords": neighbor_note.keywords,
+                                            "links": neighbor_note.links,
+                                            "retrieval_count": neighbor_note.retrieval_count,
+                                            "timestamp": neighbor_note.timestamp,
+                                            "last_accessed": neighbor_note.last_accessed,
+                                            "context": neighbor_note.context,
+                                            "evolution_history": neighbor_note.evolution_history,
+                                            "category": neighbor_note.category,
+                                            "tags": neighbor_note.tags,
+                                            "user_id": neighbor_user_id,
+                                            "session_id": neighbor_session_id
+                                        }
+                                        
+                                        # Update the neighbor in the LTM
+                                        self.ltm._get_collection(neighbor_user_id, neighbor_session_id).add_document(
+                                            document=neighbor_note.content,
+                                            metadata=neighbor_metadata,
+                                            doc_id=target_memory_id
+                                        )
+                                        
+                                        # Also update in the memory dictionary
+                                        self.memories[target_memory_id] = neighbor_note
                                     else:
                                          logger.warning(f"Could not find neighbor note {target_memory_id} to add backward link.")
                             
@@ -1169,7 +1338,7 @@ class AgenticMemorySystem:
             idx = int(id_str)
             if 0 <= idx < len(neighbor_memory_ids):
                 return neighbor_memory_ids[idx]
-                    
+                
         elif self._is_valid_uuid(id_str) and id_str in self.memories:
             return id_str
             
@@ -1191,6 +1360,8 @@ class AgenticMemorySystem:
             return
             
         merge_time = datetime.now().isoformat()
+        user_id = getattr(target_note, 'user_id', None)
+        session_id = getattr(target_note, 'session_id', None)
         
         if strategy == "replace":
             merged_content = new_note.content
@@ -1248,7 +1419,9 @@ class AgenticMemorySystem:
             })
             new_note.merged = True
             new_note.merged_into = target_id
-            
+        
+        # Merge links between the memories
+        self._merge_links(target_note, new_note)
         
         metadata = {
             "id": target_note.id,
@@ -1261,10 +1434,12 @@ class AgenticMemorySystem:
             "context": target_note.context,
             "evolution_history": target_note.evolution_history,
             "category": target_note.category,
-            "tags": target_note.tags
+            "tags": target_note.tags,
+            "user_id": user_id,
+            "session_id": session_id
         }
         
-        self.retriever.add_document(document=target_note.content, metadata=metadata, doc_id=target_id)
+        self.ltm._get_collection(user_id, session_id).add_document(document=target_note.content, metadata=metadata, doc_id=target_id)
         
         logger.info(f"Merged memory {new_note.id} into {target_id} using strategy '{strategy}'")
         logger.info(f"Merged content reasoning: {reasoning}")
@@ -1324,12 +1499,28 @@ class AgenticMemorySystem:
             target_note: The target memory note to update
             source_note: The source memory note to take links from
         """
+        # Ensure target links is a dictionary
         if not isinstance(target_note.links, dict):
-            target_note.links = {}
-        if not isinstance(source_note.links, dict):
+            if isinstance(target_note.links, str):
+                try:
+                    target_note.links = json.loads(target_note.links)
+                except json.JSONDecodeError:
+                    target_note.links = {}
+            else:
+                target_note.links = {}
+        
+        # Ensure source links is a dictionary
+        source_links = source_note.links
+        if isinstance(source_links, str):
+            try:
+                source_links = json.loads(source_links)
+            except json.JSONDecodeError:
+                source_links = {}
+        
+        if not isinstance(source_links, dict):
             return
             
-        for link_id, link_data in source_note.links.items():
+        for link_id, link_data in source_links.items():
             if link_id == target_note.id or link_id == source_note.id:
                 continue
                 
@@ -1343,17 +1534,56 @@ class AgenticMemorySystem:
                 target_note.links[link_id] = link_data
                 
         current_time_iso = datetime.now().isoformat()
+        
+        # Update all memories that link to the source note to now link to the target note
         for link_id in target_note.links:
             linked_note = self.memories.get(link_id)
             if linked_note and isinstance(linked_note.links, dict):
+                # If linked note references the source note, update it to point to target
                 if source_note.id in linked_note.links and target_note.id not in linked_note.links:
-                    linked_note.links[target_note.id] = linked_note.links[source_note.id]
+                    linked_note.links[target_note.id] = linked_note.links[source_note.id].copy()
                     if isinstance(linked_note.links[target_note.id], dict):
                         linked_note.links[target_note.id]['timestamp'] = current_time_iso
                         linked_note.links[target_note.id]['note'] = f"Link transferred from merged memory {source_note.id}"
                     
                     del linked_note.links[source_note.id]
                     
+                    # Update the linked note in LTM storage
+                    user_id = getattr(linked_note, 'user_id', None)
+                    session_id = getattr(linked_note, 'session_id', None)
+                    metadata = {
+                        "id": linked_note.id,
+                        "content": linked_note.content,
+                        "keywords": linked_note.keywords,
+                        "links": linked_note.links,
+                        "retrieval_count": linked_note.retrieval_count,
+                        "timestamp": linked_note.timestamp,
+                        "last_accessed": linked_note.last_accessed,
+                        "context": linked_note.context,
+                        "evolution_history": linked_note.evolution_history,
+                        "category": linked_note.category,
+                        "tags": linked_note.tags,
+                        "user_id": user_id,
+                        "session_id": session_id
+                    }
+                    
+                    # Update in the correct collection
+                    self.ltm._get_collection(user_id, session_id).add_document(
+                        document=linked_note.content, 
+                        metadata=metadata, 
+                        doc_id=link_id
+                    )
+                    
+                    # Also update in STM if present
+                    self.stm.add(
+                        link_id, 
+                        linked_note.content, 
+                        metadata, 
+                        user_id, 
+                        session_id
+                    )
+                    
+                    # Update in memory dictionary
                     self.memories[link_id] = linked_note
 
     def _is_valid_uuid(self, val: str) -> bool:

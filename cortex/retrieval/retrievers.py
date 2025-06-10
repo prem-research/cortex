@@ -8,9 +8,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def simple_tokenize(text):
-    return word_tokenize(text)
-
 class ChromaRetriever:
     """Vector database retrieval using ChromaDB"""
     def __init__(self, collection_name: str = "memories"):
@@ -19,8 +16,14 @@ class ChromaRetriever:
         Args:
             collection_name: Name of the ChromaDB collection
         """
-        self.client = chromadb.Client(Settings(allow_reset=True))
-        self.collection = self.client.get_or_create_collection(name=collection_name)
+        self.collection_name = collection_name
+        try:
+            self.client = chromadb.Client(Settings(allow_reset=True))
+            self.collection = self.client.get_or_create_collection(name=collection_name)
+        except Exception as e:
+            logger.error(f"Error initializing ChromaDB collection '{collection_name}': {e}")
+
+            
         # Map of doc_id -> content hash for tracking changes
         self.content_hashes = {}
         
@@ -37,10 +40,12 @@ class ChromaRetriever:
             metadata: Dictionary of metadata
             doc_id: Unique identifier for the document
         """
-        # Calculate content hash
+        if not document or not doc_id:
+            logger.warning(f"Skipping add for empty document or missing ID")
+            return
+            
         content_hash = self._hash_content(document + str(metadata))
         
-        # Check if this exact document is already in the collection
         existing_hash = self.content_hashes.get(doc_id)
         if existing_hash == content_hash:
             # Same ID and same content - no need to update
@@ -50,9 +55,13 @@ class ChromaRetriever:
         # Different content or new document - process metadata
         processed_metadata = {}
         for key, value in metadata.items():
+            # Skip None values
+            if value is None:
+                continue
+                
             # Ensure links dictionary is also dumped as JSON string
             if key == 'links' and isinstance(value, dict):
-                 processed_metadata[key] = json.dumps(value)
+                processed_metadata[key] = json.dumps(value)
             elif isinstance(value, list):
                 processed_metadata[key] = json.dumps(value)
             elif isinstance(value, dict):
@@ -78,7 +87,7 @@ class ChromaRetriever:
             self.content_hashes[doc_id] = content_hash
             logger.debug(f"Added/updated document: {doc_id}")
         except Exception as e:
-            logger.error(f"Error adding document: {e}")
+            logger.error(f"Error adding document to '{self.collection_name}': {e}")
         
     def delete_document(self, doc_id: str):
         """Delete a document from ChromaDB.
@@ -86,13 +95,16 @@ class ChromaRetriever:
         Args:
             doc_id: ID of document to delete
         """
+        if not doc_id:
+            return
+            
         try:
             self.collection.delete(ids=[doc_id])
             # Remove from hash cache
             if doc_id in self.content_hashes:
                 del self.content_hashes[doc_id]
         except Exception as e:
-            logger.error(f"Error deleting document: {e}")
+            logger.error(f"Error deleting document from '{self.collection_name}': {e}")
     
     def save(self, file_path, embeddings_path=None):
         """Save the current collection state for later restoration."""
@@ -122,36 +134,64 @@ class ChromaRetriever:
         Returns:
             List[Dict]: List of results, each containing id, metadata, distance, and document.
         """
+            
         try:
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=k,
-                where=where_filter,
-                include=['metadatas', 'documents', 'distances']
-            )
+            collection_count = self.collection.count()
+            if collection_count == 0:
+                logger.warning(f"Collection '{self.collection_name}' is empty")
+                return []
+                
+            if k > collection_count:
+                logger.warning(f"Number of requested results {k} is greater than number of elements in index {collection_count}, updating n_results = {collection_count}")
+                k = collection_count
+            
+            # a direct lookup (no semantic search)
+            if not query and where_filter:
+                results = self.collection.query(
+                    query_texts=[""],
+                    n_results=k,
+                    where=where_filter,
+                    include=['metadatas', 'documents', 'distances']
+                )
+            else:
+                # semantic search
+                results = self.collection.query(
+                    query_texts=[query or ""],  # Handle None query
+                    n_results=k,
+                    where=where_filter,
+                    include=['metadatas', 'documents', 'distances']
+                )
         except Exception as e:
-            logger.error(f"ChromaDB query failed: {e}")
+            logger.error(f"ChromaDB query failed in '{self.collection_name}': {e}")
             return []
 
         processed_results = []
-        # Check if results are valid and have the expected structure
         if results and all(key in results for key in ['ids', 'metadatas', 'distances', 'documents']) and results['ids']:
-             # Assuming a single query, so we access the first list in each result key
-             ids = results['ids'][0]
-             metadatas = results['metadatas'][0]
-             distances = results['distances'][0]
-             documents = results['documents'][0]
-             
-             for i in range(len(ids)):
-                 # Process metadata (convert JSON strings back)
-                 metadata = metadatas[i]
-                 processed_metadata = {}
-                 if metadata:
-                     for key, value in metadata.items():
-                         try:
+            if not results['ids'][0]:
+                logger.warning(f"No results found in collection '{self.collection_name}' for query: '{query}' with filter: {where_filter}")
+                return []
+                
+            # Assuming a single query, so we access the first list in each result key
+            ids = results['ids'][0]
+            metadatas = results['metadatas'][0]
+            distances = results['distances'][0]
+            documents = results['documents'][0]
+            
+            for i in range(len(ids)):
+                # Process metadata (convert JSON strings back)
+                metadata = metadatas[i] if i < len(metadatas) else {}
+                processed_metadata = {}
+                
+                if metadata:
+                    for key, value in metadata.items():
+                        try:
                             # Try to parse JSON for lists, dicts (including links)
                             if isinstance(value, str) and (value.startswith('[') or value.startswith('{')):
-                                processed_metadata[key] = json.loads(value)
+                                try:
+                                    parsed_value = json.loads(value)
+                                    processed_metadata[key] = parsed_value
+                                except json.JSONDecodeError:
+                                    processed_metadata[key] = value
                             # Convert numeric strings back to numbers
                             elif isinstance(value, str) and value.replace('.', '', 1).isdigit():
                                 if '.' in value:
@@ -160,15 +200,20 @@ class ChromaRetriever:
                                     processed_metadata[key] = int(value)
                             else:
                                 processed_metadata[key] = value
-                         except (json.JSONDecodeError, ValueError):
-                             processed_metadata[key] = value
-                 
-                 processed_results.append({
-                     'id': ids[i],
-                     'metadata': processed_metadata,
-                     'distance': distances[i],
-                     'document': documents[i]
-                 })
+                        except (json.JSONDecodeError, ValueError):
+                            processed_metadata[key] = value
+                
+                document = documents[i] if i < len(documents) else ""
+                distance = distances[i] if i < len(distances) else 1.0
+                
+                processed_results.append({
+                    'id': ids[i],
+                    'metadata': processed_metadata,
+                    'distance': distance,
+                    'document': document
+                })
+        else:
+            logger.warning(f"Invalid or empty results from ChromaDB for query: '{query}' in collection '{self.collection_name}'")
                         
         return processed_results
 
@@ -204,3 +249,35 @@ class ChromaRetriever:
             self.add_document(memory.content, metadata, memory_id)
             
         return self
+    
+    def clear(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
+        """Clear memories for a specific user/session or all if none specified"""
+        where_conditions = {}
+        
+        if user_id is not None:
+            where_conditions["user_id"] = {"$eq": user_id}
+        
+        if session_id is not None:
+            where_conditions["session_id"] = {"$eq": session_id}
+        
+        try:
+            # If no conditions specified, get all IDs and delete them
+            if not where_conditions:
+                # Get all document IDs
+                results = self.collection.get(include=['documents'])
+                if results and 'ids' in results and results['ids']:
+                    self.collection.delete(ids=results['ids'])
+                    logger.debug(f"Cleared all documents from collection '{self.collection_name}'")
+                self.content_hashes.clear()
+            else:
+                # Delete only matching documents
+                results = self.collection.get(where=where_conditions, include=['documents'])
+                if results and 'ids' in results and results['ids']:
+                    self.collection.delete(ids=results['ids'])
+                    # Clean up content_hashes for deleted IDs
+                    for doc_id in results['ids']:
+                        if doc_id in self.content_hashes:
+                            del self.content_hashes[doc_id]
+                    logger.debug(f"Cleared documents with filter from '{self.collection_name}': {where_conditions}")
+        except Exception as e:
+            logger.error(f"Error clearing collection '{self.collection_name}': {e}")
