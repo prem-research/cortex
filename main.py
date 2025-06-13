@@ -323,7 +323,8 @@ def compare_memory_sources(query: str, user_id: Optional[str] = None, session_id
     
     # Search in STM only
     stm_results = retrieve_memories(
-        q=query, 
+        q=query,
+        limit=3,
         user_id=user_id, 
         session_id=session_id,
         memory_source="stm"
@@ -332,6 +333,7 @@ def compare_memory_sources(query: str, user_id: Optional[str] = None, session_id
     # Search in LTM only
     ltm_results = retrieve_memories(
         q=query, 
+        limit=3,
         user_id=user_id, 
         session_id=session_id,
         memory_source="ltm"
@@ -494,7 +496,7 @@ def get_stm_memories():
     
     return memories
 
-def get_ltm_memories():
+def get_ltm_memories(user_id=None, session_id=None):
     """
     Get memories from LTM by searching with a broad query
     """
@@ -502,7 +504,9 @@ def get_ltm_memories():
     results = memory_system.search_memory(
         query="",  # Empty query returns everything
         limit=100,  # Large limit to get most memories
-        memory_source="ltm"
+        memory_source="ltm",
+        user_id=user_id,
+        session_id=session_id
     )
     
     memories = []
@@ -644,50 +648,44 @@ def load_memories_from_json(stm_json_path=None, ltm_json_path=None):
     return stm_memories, ltm_memories
 
 if __name__ == "__main__":
-    # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Run the memory system with Lyra content')
     parser.add_argument('--stm-json', type=str, help='Path to pre-stored STM memories JSON file')
     parser.add_argument('--ltm-json', type=str, help='Path to pre-stored LTM memories JSON file')
-    # parser.add_argument('--input-file', type=str, default="../lyra.txt", help='Path to the input text file (default: ../lyra.txt)')
-    parser.add_argument('--input-file', type=str, default="../manual.md", help='Path to the input text file (default: ../lyra.txt)')
+    parser.add_argument('--input-file', type=str, default="examples/lyra/lyra.txt", help='Path to the input text file (default: ../lyra.txt)')
+    parser.add_argument('--queries-file', type=str, default="examples/lyra/queries.json", help='Path to the queries file (default: examples/lyra/queries.json)')
+    parser.add_argument('--output-dir', type=str, default="examples/lyra", help='Path to the output directory (default: examples/lyra)')
     parser.add_argument('--skip-storage', action='store_true', help='Skip storing segments and go directly to queries')
     args = parser.parse_args()
     
-    # Check if we should load from JSON files
+    # Check if we should load from JSON files (not needed if --skip-storage is used, not required for first run)
     stm_memories = []
     ltm_memories = []
     if args.stm_json or args.ltm_json:
         stm_memories, ltm_memories = load_memories_from_json(args.stm_json, args.ltm_json)
         print(f"Loaded {len(stm_memories)} STM memories and {len(ltm_memories)} LTM memories from JSON files")
     
-    # Process and store Lyra content if not skipping
+    # Process and store given corpus content if not skipping
     if not args.skip_storage and not (args.stm_json and args.ltm_json):
-        print("=== Loading and storing Lyra content ===")
         
-        # Extract segments from the Lyra text file
         lyra_segments = extract_segments_from_file(args.input_file)
         print(f"Extracted {len(lyra_segments)} segments from {args.input_file}")
         
         # Define user and session for Lyra data
-        lyra_user = "lyra"
-        lyra_session = "default"
+        user = "testuser1"
+        session = "testsession1"
         
         # Store segments as memories
         stored_count = 0
         for segment in lyra_segments:
-            if len(segment.strip()) < 50:  # Skip very short segments
-                continue
-                
             try:
                 print(f"Storing segment {stored_count+1}/{len(lyra_segments)}: {segment[:50]}...")
                 store_memory(MemoryInput(
                     content=segment, 
-                    user_id=lyra_user, 
-                    session_id=lyra_session,
+                    user_id=user, 
+                    session_id=session,
                 ))
                 stored_count += 1
-                # Small delay to allow processing
-                time.sleep(0.2)
+                time.sleep(0.1)
             except Exception as e:
                 print(f"Error storing segment: {e}")
         
@@ -696,56 +694,34 @@ if __name__ == "__main__":
         print("=== Skipping storage phase as requested ===")
     
     # Example queries for Lyra content
-    # lyra_queries = [
-    #     "Who is Lyra Drake?",
-    #     "What are Lyra's artistic abilities?",
-    #     "What is Lyra's background?",
-    #     "What books has Lyra read?",
-    #     "What are Lyra's thoughts on faith?",
-    #     "What does Lyra think about beauty?",
-    #     "What are Lyra's quotes about pleasure?",
-    #     "Desert experience with Mr. Maverick"
-    # ]
-    lyra_queries = [
-        "what is the SMEM memory address of ICSSG1 core",
-        "what is the specific mechanism for enabling IP Halt with corresponding CPU halt in the CRC_HALTEN register?",
-        "how does the MSS_CTRL_MSS_CR5B1_AXI_WR_BUS_SAFETY_ERR register handle dual error detection in different segments of the Data Bus?",
-        "what is the relationship between MPU_ADDR_INTR_ERRAGG3_MASK register and protection error propagation to R5SS1 CORE1?",
-        "explain the difference between masking an error with 1'b1 versus 1'b0 in the MPU_PROT_INTR_ERRAGG3_MASK register",
-        "what are the specific conditions required to inject a fault for request signals on Safe Interconnect using MSS_TPTC_A1_RD_BUS_SAFETY_FI_GLOBAL_SAFE_REQ?",
-        "how does the HSM_TPTC_A0_WR_BUS_SAFETY_CTRL_TYPE field differ from HSM_TPTC_A0_WR_BUS_SAFETY_CTRL_ENABLE in terms of functionality?",
-        "what is the significance of the address latching mechanism when a parity error occurs in the B0TCM of R5SS1 CORE0?",
-        "how does the raw status reporting in MPU_ADDR_INTR_ERRAGG3_STATUS_RAW differ from the masked status reporting?",
-        "what is the architectural significance of the MSS_CR5B1_AXI_WR_BUS_SAFETY_ERR_SEC field in detecting single errors in the Data port?",
-        "explain the process of clearing an interrupt in the MSS_TPCC_A_INTAGG_STATUS register and its relationship to the MSS_TPCC_A_INTAGG_MASK"
-    ]
+    fetched_queries = json.load(open(args.queries_file))
     
     # Define user and session for queries
-    lyra_user = "lyra"
-    lyra_session = "default"
+    user = "testuser1"
+    session = "testsession1"
     
-    print("=== Testing memory retrieval with Lyra-specific queries ===")
+    print(f"=== Testing memory retrieval with {len(fetched_queries)} queries ===")
     
     # Run test queries
     all_results = {}
-    for query in lyra_queries:
-        results = compare_memory_sources(query, lyra_user, lyra_session)
+    for query in fetched_queries:
+        results = compare_memory_sources(query, user, session)
         all_results[query] = results
     
     print("\n=== Saving memory contents to JSON files ===")
     
-    # Get and save STM memories
-    if not args.stm_json:  # Only get from system if not loaded from file
+    # Get and save STM memories for rerun later if req (use --stm-json with correct path to previously saved stm_memories.json to skip)
+    if not args.stm_json:
         stm_memories = get_stm_memories()
-    save_memories_to_json(stm_memories, "stm_memories.json")
+    save_memories_to_json(stm_memories, os.path.join(args.output_dir, "stm_memories.json"))
     
-    # Get and save LTM memories
-    if not args.ltm_json:  # Only get from system if not loaded from file
-        ltm_memories = get_ltm_memories()
-    save_memories_to_json(ltm_memories, "ltm_memories.json")
+    # Get and save LTM memories for rerun later if req (use --ltm-json with correct path to previously saved ltm_memories.json to skip)
+    if not args.ltm_json:
+        ltm_memories = get_ltm_memories(user, session)
+    save_memories_to_json(ltm_memories, os.path.join(args.output_dir, "ltm_memories.json"))
     
     # Save all query results
-    print("Saving query results to queries_results.json")
+    print(f"Saving query results to {os.path.join(args.output_dir, 'full_query_results.json')}")
     query_results = {}
     for query, results in all_results.items():
         query_results[query] = {
@@ -754,10 +730,10 @@ if __name__ == "__main__":
             "all": [{"id": m.id, "content": m.content, "score": m.score, "tier": m.memory_tier} for m in results["all"]]
         }
     
-    with open("query_results.json", 'w', encoding='utf-8') as f:
+    with open(os.path.join(args.output_dir, "full_query_results.json"), 'w', encoding='utf-8') as f:
         json.dump(query_results, f, indent=2)
     
-    print("Done! Memory contents saved to:")
+    print("Memory contents saved to:")
     print("- stm_memories.json")
     print("- ltm_memories.json")
     print("- query_results.json")
