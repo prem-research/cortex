@@ -12,8 +12,20 @@ from openai import OpenAI
 from tqdm import tqdm
 
 from cortex.memory_system import AgenticMemorySystem
+from cortex.constants import (
+    DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, DEFAULT_LLM_BACKEND,
+    DEFAULT_STM_CAPACITY, DEFAULT_SEARCH_LIMIT, DEFAULT_CHROMA_URI
+)
+
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
 
 load_dotenv()
+
+# Set environment variable to avoid tokenizer parallelism warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Prompt template for generating answers
 ANSWER_PROMPT = """
@@ -207,12 +219,16 @@ encoding = tiktoken.encoding_for_model("gpt-4o")
 
 
 class CortexSearch:
-    def __init__(self, output_path='results.json', top_k=10, memory_system=None, temperature_c5=0.5):
+    def __init__(self, output_path='results.json', top_k=DEFAULT_SEARCH_LIMIT*2, memory_system=None, temperature_c5=0.5, print_running_averages=True):
+        # Initialize with persistent ChromaDB storage and automatic embedding backend detection
+        # Supports both OpenAI (text-embedding-3-small) and local (all-MiniLM-L6-v2) embeddings
         self.memory_system = memory_system or AgenticMemorySystem(
-            model_name='all-MiniLM-L6-v2',  # Embedding model
-            llm_backend="openai",           # LLM provider
-            llm_model="gpt-4o-mini",        # LLM model
-            stm_capacity=100                # STM capacity
+            model_name=DEFAULT_EMBEDDING_MODEL,     # Use constant
+            llm_backend=DEFAULT_LLM_BACKEND,        # Use constant  
+            llm_model=DEFAULT_LLM_MODEL,            # Use constant
+            stm_capacity=DEFAULT_STM_CAPACITY,      # Use constant
+            enable_smart_collections=True,          # Enable smart collections for evaluation
+            enable_background_processing=False      # Disable for controlled evaluation environment
         )
         self.top_k = top_k
         self.openai_client = OpenAI()
@@ -223,27 +239,35 @@ class CortexSearch:
         self.average_memory_time = []
         self.average_normal_memories = []
         self.average_linked_memories = []
+        self.print_running_averages = print_running_averages  # Control running average printing
 
-    def search_memory(self, user_id, query, max_retries=3, retry_delay=1):
+    def search_memory(self, user_id, query, max_retries=3, retry_delay=1, temporal_weight=None, date_range=None):
         start_time = time.time()
         retries = 0
         
-        # Analyze the query content to get keywords and context
         analyzed_query = self.memory_system.analyze_content(query)
-        # analyzed_query = {"keywords": [], "context": query} #NOTE: NOT USING KEYWORDS FOR NOW
-        # print(f"Analyzed query: {analyzed_query}")
+        # Auto-detect temporal queries if temporal_weight not explicitly set
+        if temporal_weight is None:
+            temporal_keywords = ["last", "recent", "latest", "yesterday", "today", "this week", "this month"]
+            has_temporal = any(keyword in query.lower() for keyword in temporal_keywords)
+            has_date_range = date_range is not None
+            
+            if has_temporal or has_date_range:
+                temporal_weight = 0.7  # 70% recency + 30% semantic for temporal queries
+            else:
+                temporal_weight = 0.0  # Pure semantic search by default
         
         while retries < max_retries:
             try:
                 # Search only in LTM as specified in requirements
-                # Using both content and keywords for search
                 content_memories = self.memory_system.search_memory(
                     query=query,
-                    user_id=user_id,  # Properly use the user_id
+                    user_id=user_id,
                     memory_source="ltm",  # Search only in LTM
-                    limit=4#self.top_k // 2
+                    limit=4,#self.top_k // 2
+                    temporal_weight=temporal_weight,
+                    date_range=date_range
                 )
-                # print(f"Content memories: {content_memories[:2]}")
                 
                 # If we have keywords from analysis, use them as an additional search
                 keywords = analyzed_query.get("keywords", [])
@@ -271,17 +295,14 @@ class CortexSearch:
                     
                 break
             except Exception as e:
-                print(f"Search error: {e}")
+                logger.error(f"Search error (attempt {retries + 1}): {e}")
                 retries += 1
                 if retries >= max_retries:
                     raise e
                 time.sleep(retry_delay)
                 
-        
         end_time = time.time()
 
-
-        
         # Format memories for response
         formatted_memories = []
         linked_memories = []
@@ -290,27 +311,34 @@ class CortexSearch:
             memory_dict = {
                 'memory': memory["content"],
                 'timestamp': memory["timestamp"],
-                'score': round(memory["score"] if hasattr(memory, 'score') else 0.0, 2),
-                'context': memory["context"],
-                'keywords': memory["keywords"],
-                'tags': memory["tags"]
+                'score': round(memory.get("score", 0.0), 2),
+                'context': memory.get("context", ""),
+                'keywords': memory.get("keywords", []),
+                'tags': memory.get("tags", [])
             }
             formatted_memories.append(memory_dict)
             
             # Get linked memories if available
-            if isinstance(memory, dict) and "links" in memory:
+            if isinstance(memory, dict) and "links" in memory and memory["links"]:
                 for link_id in memory["links"]:
-                    linked_memory = self.memory_system.read(link_id, user_id)
-                    if linked_memory:
-                        link_info = {
-                            'memory': linked_memory.content,
-                            'timestamp': linked_memory.timestamp,
-                            'source_id': memory["id"],
-                            'target_id': link_id,
-                            'relationship': memory["links"].get(link_id, {}).get('type', 'related'),
-                            'strength': memory["links"].get(link_id, {}).get('strength', 0.0)
-                        }
-                        linked_memories.append(link_info)
+                    try:
+                        linked_memory = self.memory_system.read(link_id, user_id)
+                        if linked_memory:
+                            link_info = {
+                                'memory': linked_memory.content,
+                                'timestamp': linked_memory.timestamp,
+                                'source_id': memory["id"],
+                                'target_id': link_id,
+                                'relationship': memory["links"].get(link_id, {}).get('type', 'related'),
+                                'strength': memory["links"].get(link_id, {}).get('strength', 0.0)
+                            }
+                            linked_memories.append(link_info)
+                        else:
+                            logger.debug(f"Linked memory {link_id} not found for user {user_id}")
+                    except Exception as e:
+                        logger.warning(f"Could not retrieve linked memory {link_id}: {e}")
+                        # Skip invalid links instead of failing
+                        continue
             
         return formatted_memories, linked_memories[:self.top_k], end_time - start_time
 
@@ -318,14 +346,15 @@ class CortexSearch:
         # Create the combined user ID
         combined_user_id = f"{speaker_a}_{speaker_b}_{idx}"
         
-        # Perform a single search with the combined user ID
+        # Perform a single search with the combined user ID (with temporal auto-detection)
         memories, linked_memories, search_time = self.search_memory(combined_user_id, question)
         self.average_normal_memories.append(len(memories))
         self.average_linked_memories.append(len(linked_memories))
         self.average_memory_time.append(search_time)
-        print("RUNNING AVERAGE MEMORY TIME: ", sum(self.average_memory_time) / len(self.average_memory_time))
-        print("RUNNING AVERAGE NORMAL MEMORIES: ", sum(self.average_normal_memories) / len(self.average_normal_memories))
-        print("RUNNING AVERAGE LINKED MEMORIES: ", sum(self.average_linked_memories) / len(self.average_linked_memories))
+        if self.print_running_averages:
+            print("RUNNING AVERAGE MEMORY TIME: ", sum(self.average_memory_time) / len(self.average_memory_time))
+            print("RUNNING AVERAGE NORMAL MEMORIES: ", sum(self.average_normal_memories) / len(self.average_normal_memories))
+            print("RUNNING AVERAGE LINKED MEMORIES: ", sum(self.average_linked_memories) / len(self.average_linked_memories))
         
         # Format direct memories with day information
         formatted_memories = []
@@ -360,7 +389,8 @@ class CortexSearch:
         # Keep track of the number of tokens in the answer prompt, and hold average
         num_tokens = len(encoding.encode(answer_prompt))
         self.num_tokens_list.append(num_tokens)
-        print("RUNNING AVERAGE TOKEN COUNT: ", sum(self.num_tokens_list) / len(self.num_tokens_list))
+        if self.print_running_averages:
+            print("RUNNING AVERAGE TOKEN COUNT: ", sum(self.num_tokens_list) / len(self.num_tokens_list))
         
         t1 = time.time()
         response = self.openai_client.chat.completions.create(
@@ -436,7 +466,7 @@ class CortexSearch:
         with open(self.output_path, 'w') as f:
             json.dump(self.results, f, indent=4)
 
-    def process_questions_parallel(self, qa_list, speaker_a, speaker_b, idx, max_workers=1):
+    def process_questions_parallel(self, qa_list, speaker_a, speaker_b, idx, max_workers=8):
         def process_single_question(val):
             result = self.process_question(val, speaker_a, speaker_b, idx)
             # Save results after each question is processed
@@ -455,7 +485,120 @@ class CortexSearch:
         with open(self.output_path, 'w') as f:
             json.dump(self.results, f, indent=4)
         
-        print("FINAL AVERAGE MEMORY TIME: ", sum(self.average_memory_time) / len(self.average_memory_time))
-        print("FINAL AVERAGE TOKEN COUNT: ", sum(self.num_tokens_list) / len(self.num_tokens_list))
+        if self.print_running_averages:
+            print("FINAL AVERAGE MEMORY TIME: ", sum(self.average_memory_time) / len(self.average_memory_time))
+            print("FINAL AVERAGE TOKEN COUNT: ", sum(self.num_tokens_list) / len(self.num_tokens_list))
 
         return results
+
+    def process_data_file_parallel(self, file_path, max_workers=4, checkpoint_interval=5):
+        """Parallel version of process_data_file that processes conversations in parallel"""
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+
+        # Aggregated metrics from all workers
+        all_memory_times = []
+        all_normal_memories = []
+        all_linked_memories = []
+        all_token_counts = []
+        completed_conversations = 0
+
+        def process_single_conversation(idx_item_pair):
+            idx, item = idx_item_pair
+            qa = item['qa']
+            conversation = item['conversation']
+            speaker_a = conversation['speaker_a']
+            speaker_b = conversation['speaker_b']
+            
+            # Create a worker instance with running averages disabled and shared memory system
+            worker = CortexSearch(
+                output_path=f"temp_worker_{idx}.json",
+                top_k=self.top_k,
+                memory_system=self.memory_system,  # Share the same memory system to avoid re-initialization
+                temperature_c5=self.temperature_c5,
+                print_running_averages=False  # Disable worker printing
+            )
+            
+            # Process questions for this conversation
+            results = worker.process_questions_parallel(qa, speaker_a, speaker_b, idx, max_workers=8)
+            
+            # Return results and metrics from this worker
+            return idx, results, {
+                'memory_times': worker.average_memory_time,
+                'normal_memories': worker.average_normal_memories, 
+                'linked_memories': worker.average_linked_memories,
+                'token_counts': worker.num_tokens_list
+            }
+
+        # Process conversations in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(process_single_conversation, (idx, item))
+                for idx, item in enumerate(data)
+            ]
+            
+            # Collect results as they complete
+            from concurrent.futures import as_completed
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Processing conversations in parallel"):
+                try:
+                    idx, conversation_results, worker_metrics = future.result(timeout=300)  # 5-minute timeout
+                    self.results[idx].extend(conversation_results)
+                    
+                    # Aggregate metrics from this worker
+                    all_memory_times.extend(worker_metrics['memory_times'])
+                    all_normal_memories.extend(worker_metrics['normal_memories'])
+                    all_linked_memories.extend(worker_metrics['linked_memories'])
+                    all_token_counts.extend(worker_metrics['token_counts'])
+                    
+                    completed_conversations += 1
+                    
+                    # Print aggregated metrics at checkpoints
+                    if completed_conversations % checkpoint_interval == 0:
+                        if all_memory_times:
+                            avg_memory_time = sum(all_memory_times) / len(all_memory_times)
+                            avg_normal_mem = sum(all_normal_memories) / len(all_normal_memories)
+                            avg_linked_mem = sum(all_linked_memories) / len(all_linked_memories)
+                            avg_tokens = sum(all_token_counts) / len(all_token_counts)
+                            
+                            print(f"\n CHECKPOINT {completed_conversations}/{len(data)} conversations:")
+                            print(f"   Average memory time: {avg_memory_time:.3f}s")
+                            print(f"   Average normal memories: {avg_normal_mem:.1f}")
+                            print(f"   Average linked memories: {avg_linked_mem:.1f}")
+                            print(f"   Average token count: {avg_tokens:.1f}")
+                    
+                    # Save results after each conversation is processed
+                    with open(self.output_path, 'w') as f:
+                        json.dump(self.results, f, indent=4)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing conversation: {e}")
+                    continue
+
+        # Print final aggregated averages
+        if all_memory_times:
+            print(f"\n FINAL AGGREGATED METRICS ({len(data)} conversations):")
+            print(f"   Total questions processed: {len(all_memory_times)}")
+            print(f"   Average memory time: {sum(all_memory_times) / len(all_memory_times):.3f}s")
+            print(f"   Average normal memories: {sum(all_normal_memories) / len(all_normal_memories):.1f}")
+            print(f"   Average linked memories: {sum(all_linked_memories) / len(all_linked_memories):.1f}")
+            print(f"   Average token count: {sum(all_token_counts) / len(all_token_counts):.1f}")
+        
+        # Update main instance metrics for consistency
+        self.average_memory_time = all_memory_times
+        self.average_normal_memories = all_normal_memories
+        self.average_linked_memories = all_linked_memories
+        self.num_tokens_list = all_token_counts
+
+        # Cleanup temporary worker files
+        import os
+        for idx in range(len(data)):
+            temp_file = f"temp_worker_{idx}.json"
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception as e:
+                    logger.warning(f"Could not remove temp file {temp_file}: {e}")
+
+        # Final save at the end
+        with open(self.output_path, 'w') as f:
+            json.dump(self.results, f, indent=4)

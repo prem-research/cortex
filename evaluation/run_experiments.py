@@ -1,5 +1,9 @@
 import argparse
 import os
+import time
+
+# Set environment variable to avoid tokenizer parallelism warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from src.cortex.add import CortexADD
 from src.cortex.search import CortexSearch
@@ -28,11 +32,13 @@ def main():
                         help='Memory technique to use')
     parser.add_argument('--method', choices=METHODS, default='add',
                         help='Method to use')
+    parser.add_argument('--search_only', action='store_true', default=False,
+                        help='Run search only (skip add phase) - requires existing persistent data')
     parser.add_argument('--chunk_size', type=int, default=1000,
                         help='Chunk size for processing')
-    parser.add_argument('--output_folder', type=str, default='results/',
+    parser.add_argument('--output_folder', type=str, default='results_july_2/',
                         help='Output path for results')
-    parser.add_argument('--top_k', type=int, default=30,
+    parser.add_argument('--top_k', type=int, default=15,
                         help='Number of top memories to retrieve')
     parser.add_argument('--filter_memories', action='store_true', default=False,
                         help='Whether to filter memories')
@@ -66,28 +72,40 @@ def main():
             )
             memory_searcher.process_data_file('dataset/locomo10.json')
     elif args.technique_type == "cortex":
-        if args.method == "add":
-            print("STARTING CORTEX ADD EXPERIMENT")
-            memory_manager = CortexADD(
-                # data_path='dataset/locomo10_2_lite.json'
-                # data_path='dataset/locomo10_2.json'
-                data_path='dataset/locomo10.json'
-            )
-            memory_manager.process_all_conversations()
-        # elif args.method == "search":
-            print("STARTING CORTEX SEARCH EXPERIMENT")
-            output_file_path = os.path.join(
-                args.output_folder,
-                f"cortex_results_top_{args.top_k}_full_dataset.json"
-            )
-            memory_searcher = CortexSearch(
-                output_file_path,
-                args.top_k,
-                memory_system=memory_manager.memory_system
-            )
-            # memory_searcher.process_data_file('dataset/locomo10_2_lite.json')
-            # memory_searcher.process_data_file('dataset/locomo10_2.json')
-            memory_searcher.process_data_file('dataset/locomo10.json')
+        memory_manager = None
+        try:
+            # Handle search-only mode (persistent data already exists)
+            if args.search_only or args.method == "search":
+                print("STARTING CORTEX SEARCH EXPERIMENT (PERSISTENT MODE)")
+                output_file_path = os.path.join(
+                    args.output_folder,
+                    f"cortex_results_top_{args.top_k}_full_dataset.json"
+                )
+                memory_searcher = CortexSearch(
+                    output_file_path,
+                    args.top_k,
+                    memory_system=None  # Let it create its own connection to persistent ChromaDB
+                )
+                memory_searcher.process_data_file_parallel('dataset/locomo10.json', max_workers=10, checkpoint_interval=5)
+                print("CORTEX SEARCH EXPERIMENT COMPLETED")
+                
+            # Handle add phase 
+            elif args.method == "add":
+                print("STARTING CORTEX ADD EXPERIMENT")
+                memory_manager = CortexADD(
+                    data_path='dataset/locomo10.json',
+                    enable_background_processing=False  # Disable for parallel processing
+                )
+                memory_manager.process_all_conversations(max_workers=10)
+                print("CORTEX ADD EXPERIMENT COMPLETED")
+                
+        except Exception as e:
+            print(f"CORTEX EXPERIMENT ERROR: {e}")
+        finally:
+            # Ensure proper cleanup
+            if memory_manager and hasattr(memory_manager.memory_system, 'shutdown'):
+                print("Shutting down memory system...")
+                memory_manager.memory_system.shutdown()
     elif args.technique_type == "rag":
         output_file_path = os.path.join(
             args.output_folder,

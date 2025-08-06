@@ -7,7 +7,7 @@ from litellm import completion
 class BaseLLMController(ABC):
     @abstractmethod
     def get_completion(self, prompt: str) -> str:
-        """Get completion from LLM"""
+        
         pass
 
 class OpenAIController(BaseLLMController):

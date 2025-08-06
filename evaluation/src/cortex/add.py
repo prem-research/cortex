@@ -7,11 +7,20 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from cortex.memory_system import AgenticMemorySystem
+from cortex.constants import (
+    DEFAULT_EMBEDDING_MODEL, DEFAULT_LLM_MODEL, DEFAULT_LLM_BACKEND,
+    DEFAULT_STM_CAPACITY, DEFAULT_CHROMA_URI
+)
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 load_dotenv()
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-# Update custom instructions
+# Main instructions for generating personal memories
 custom_instructions ="""
 Generate personal memories that follow these guidelines:
 
@@ -40,31 +49,68 @@ Generate personal memories that follow these guidelines:
 5. Format each memory as a paragraph with a clear narrative structure that captures the person's experience, challenges, and aspirations
 """
 
-# Helper function to extract day from timestamp
 def extract_day_from_timestamp(timestamp):
-    if not isinstance(timestamp, str) or "on" not in timestamp:
+    if not isinstance(timestamp, str):
         return None
         
     try:
-        parts = timestamp.split("on")
-        if len(parts) > 1:
-            date_part = parts[1].strip()
+        if "(" in timestamp and ")" in timestamp:
+            day_part = timestamp.split("(")[-1].split(")")[0].strip()
+            if day_part:
+                return day_part
+        
+        try:
             from datetime import datetime
-            date_obj = datetime.strptime(date_part, "%d %B, %Y")
-            return date_obj.strftime("%A")  # Get day name (Monday, Tuesday, etc.)
-    except Exception:
-        pass
+            parsed_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            return parsed_dt.strftime("%A")
+        except (ValueError, AttributeError):
+            pass
+        
+        if "on" in timestamp:
+            parts = timestamp.split("on")
+            if len(parts) > 1:
+                date_part = parts[1].strip()
+                if "(" in date_part:
+                    date_part = date_part.split("(")[0].strip()
+                
+                from datetime import datetime
+                date_formats = [
+                    "%d %B, %Y",
+                    "%B %d, %Y",
+                    "%d-%m-%Y",
+                    "%Y-%m-%d",
+                ]
+                
+                for fmt in date_formats:
+                    try:
+                        date_obj = datetime.strptime(date_part, fmt)
+                        return date_obj.strftime("%A")
+                    except ValueError:
+                        continue
+                        
+    except Exception as e:
+        logger.warning(f"Could not parse timestamp: {timestamp} - {e}")
+        
     return None
 
 class CortexADD:
-    def __init__(self, data_path=None, batch_size=2, memory_system=None):
-        self.memory_system = memory_system or AgenticMemorySystem(
-            model_name='all-MiniLM-L6-v2',  # Embedding model
-            llm_backend="openai",           # LLM provider
-            llm_model="gpt-4o-mini",             # LLM model
-            stm_capacity=100                # STM capacity
-        )
+    def __init__(self, data_path=None, batch_size=2, memory_system=None, enable_background_processing=False):
+        if memory_system:
+            self.memory_system = memory_system
+        else:
+            try:
+                self.memory_system = AgenticMemorySystem(
+                    model_name=DEFAULT_EMBEDDING_MODEL,
+                    llm_backend=DEFAULT_LLM_BACKEND,
+                    llm_model=DEFAULT_LLM_MODEL,
+                    stm_capacity=DEFAULT_STM_CAPACITY,
+                    enable_smart_collections=True,
+                    enable_background_processing=enable_background_processing
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to initialize AgenticMemorySystem: {e}")
         
+        self.enable_background_processing = enable_background_processing
         self.batch_size = batch_size
         self.data_path = data_path
         self.data = None
@@ -77,50 +123,36 @@ class CortexADD:
         return self.data
 
     def add_memory(self, user_id, message, metadata, retries=3):
+        if self.memory_system is None:
+            raise RuntimeError("Memory system not initialized")
+            
         for attempt in range(retries):
             try:
-                # Process content to extract metadata if not provided
-                analyzed_content = self.memory_system.analyze_content(message)
-                
-                # Combine provided metadata with analyzed content
-                combined_metadata = {
-                    "timestamp": metadata.get("timestamp", ""),
-                    "context": analyzed_content.get("context", ""),
-                    "keywords": analyzed_content.get("keywords", []),
-                    "tags": analyzed_content.get("tags", [])
-                }
-
-                day = extract_day_from_timestamp(combined_metadata["timestamp"])
+                timestamp = metadata.get("timestamp", "")
+                day = extract_day_from_timestamp(timestamp)
                 day_info = f" ({day})" if day else ""
-                combined_metadata["timestamp"] = combined_metadata["timestamp"] + day_info
+                final_timestamp = timestamp + day_info
                 
-                # Store only in LTM as specified in requirements
                 memory_id = self.memory_system.add_note(
                     content=message,
-                    context=combined_metadata["context"],
-                    keywords=combined_metadata["keywords"],
-                    tags=combined_metadata["tags"],
-                    timestamp=combined_metadata["timestamp"],
+                    time=final_timestamp,
                     user_id=user_id,
                 )
                 return memory_id
             except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed to add memory: {e}")
                 if attempt < retries - 1:
-                    time.sleep(1)  # Wait before retrying
+                    time.sleep(1)
                     continue
                 else:
+                    logger.error(f"Failed to add memory after {retries} attempts: {e}")
                     raise e
 
     def add_memories_batch(self, user_id, messages, timestamp, desc):
         added_memory_ids = []
         for i in tqdm(range(0, len(messages), self.batch_size), desc=desc):
             batch_messages = messages[i:i+self.batch_size]
-            
-            # Create a single batch entry with all messages concatenated
-            # This prevents multiple evo_label outputs per batch
             batch_content = "\n\n".join(batch_messages)
-            
-            # Add as a single memory
             memory_id = self.add_memory(user_id, batch_content, metadata={"timestamp": timestamp})
             added_memory_ids.append(memory_id)
             
@@ -131,10 +163,7 @@ class CortexADD:
         speaker_a = conversation['speaker_a']
         speaker_b = conversation['speaker_b']
 
-        # Create a combined user ID for both speakers
         combined_user_id = f"{speaker_a}_{speaker_b}_{idx}"
-
-        # Keep track of all added memory IDs for this conversation
         all_memory_ids = []
         
         for key in conversation.keys():
@@ -145,7 +174,6 @@ class CortexADD:
             timestamp = conversation.get(date_time_key, "")
             chats = conversation[key]
 
-            # Store all messages from the conversation in a single list
             all_messages = []
             for chat in chats:
                 if chat['speaker'] == speaker_a:
@@ -157,7 +185,6 @@ class CortexADD:
                 
                 all_messages.append(message)
 
-            # Add all messages to memory
             print("SESSION::", combined_user_id)
             memory_ids = self.add_memories_batch(
                 combined_user_id, 
@@ -166,89 +193,65 @@ class CortexADD:
                 f"Adding Memories for Conversation {idx} -- {key}"
             )
             all_memory_ids.extend(memory_ids)
-            
-            # Ensure the results directory exists
-            os.makedirs("results", exist_ok=True)
-            
-            # Save LTM data to JSON, excluding embeddings
-            # with open(f"results/memories_{combined_user_id}.json", "w") as f:                
-            #     # Get LTM memories for this user - properly include the user_id
-            #     memories = self.memory_system.search_memory(
-            #         query="",
-            #         user_id=combined_user_id,  # Include the user_id!
-            #         memory_source="ltm",
-            #         limit=1000  # Large number to get all memories
-            #     )
-                
-            #     # Debug: Check if any memories have links
-            #     has_links = False
-            #     for memory in memories:
-            #         links = memory.get("links", {})
-            #         if links and links != {} and links != "{}":
-            #             has_links = True
-            #             # print(f"Found memory with links: {memory['id']}, links: {links}")
-                
-            #     if not has_links:
-            #         print(f"WARNING: No memories found with links for user {combined_user_id}")
-                    
-            #         # Additional debug: Search other collections
-            #         print("Searching other collections for memories with links...")
-            #         general_memories = self.memory_system.search_memory(
-            #             query="",
-            #             user_id=None,  # Try without user filtering
-            #             memory_source="ltm",
-            #             limit=1000
-            #         )
-                    
-            #         for memory in general_memories:
-            #             links = memory.get("links", {})
-            #             if links and links != {} and links != "{}":
-            #                 print(f"Found memory in general search with links: {memory['id']}, user: {memory.get('user_id')}, links: {links}")
-                
-            #     # Filter out embeddings and other non-serializable data
-            #     serializable_memories = {}
-            #     if memories:
-            #         for memory in memories:
-            #             memory_id = memory.get("id", f"memory_{len(serializable_memories)}")
-            #             serializable_memory = {}
-            #             for k, v in memory.items():
-            #                 if k not in ['embedding', '_embedding']:
-            #                     # Handle links specially to ensure they're properly deserialized
-            #                     if k == 'links':
-            #                         if isinstance(v, str):
-            #                             try:
-            #                                 v_dict = json.loads(v)
-            #                                 serializable_memory[k] = v_dict
-            #                                 # Debug specific link serialization
-            #                                 print(f"Deserialized links from string to dict: {v} -> {v_dict}")
-            #                             except json.JSONDecodeError:
-            #                                 serializable_memory[k] = {}
-            #                         else:
-            #                             serializable_memory[k] = v
-            #                     elif isinstance(v, (str, int, float, bool, list, dict)) or v is None:
-            #                         serializable_memory[k] = v
-            #                     else:
-            #                         # Convert non-serializable items to string representation
-            #                         serializable_memory[k] = str(v)
-            #             serializable_memories[memory_id] = serializable_memory
-                
-            #     # Also save in a format that we can verify has data
-            #     print(f"Saved {len(serializable_memories)} memories to file")
-            #     json.dump(serializable_memories, f, indent=4)
-        
-        # Once all memories are added, trigger a consolidation to ensure proper indexing
-        self.memory_system.consolidate_memories()
         
         print("Messages added successfully")
 
-    def process_all_conversations(self, max_workers=10):
+    def process_all_conversations(self, max_workers=4):
         if not self.data:
             raise ValueError("No data loaded. Please set data_path and call load_data() first.")
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [
-                executor.submit(self.process_conversation, item, idx)
-                for idx, item in enumerate(self.data)
-            ]
-
-            for future in futures:
-                future.result()
+        
+        if self.memory_system is None:
+            raise RuntimeError("Memory system not initialized")
+        
+        processing_mode = "with background processing" if self.enable_background_processing else "synchronous processing"
+        logger.info(f" Processing {len(self.data)} conversations with {max_workers} workers ({processing_mode})")
+        
+        successful_conversations = 0
+        failed_conversations = 0
+        
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = []
+                
+                for idx, item in enumerate(self.data):
+                    future = executor.submit(self._safe_process_conversation, item, idx)
+                    futures.append((idx, future))
+                
+                from concurrent.futures import as_completed
+                for idx, future in futures:
+                    try:
+                        future.result(timeout=720)
+                        successful_conversations += 1
+                        logger.info(f" Completed conversation {successful_conversations}/{len(self.data)}")
+                    except Exception as e:
+                        failed_conversations += 1
+                        logger.error(f" Error processing conversation {idx}: {e}")
+                        continue
+                        
+        except Exception as e:
+            logger.error(f"Parallel processing failed ({e}), falling back to sequential processing")
+            successful_conversations = 0
+            failed_conversations = 0
+            
+            for idx, item in enumerate(self.data):
+                try:
+                    logger.info(f" Sequential processing conversation {idx+1}/{len(self.data)}")
+                    self.process_conversation(item, idx)
+                    successful_conversations += 1
+                except Exception as e:
+                    failed_conversations += 1
+                    logger.error(f" Error processing conversation {idx}: {e}")
+                    continue
+                    
+        logger.info(f" Processing complete: {successful_conversations} successful, {failed_conversations} failed")
+        
+        if failed_conversations > 0:
+            logger.warning(f" {failed_conversations} conversations failed to process")
+            
+    def _safe_process_conversation(self, item, idx):
+        try:
+            time.sleep(0.1 * (idx % 5))
+            self.process_conversation(item, idx)
+        except Exception as e:
+            logger.error(f"Error in _safe_process_conversation for idx {idx}: {e}")
+            raise e
