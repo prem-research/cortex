@@ -2,7 +2,29 @@
 
 A memory system for AI agents that stores, retrieves, and evolves information over time. Inspired by human cognitive architecture with dual-tier memory (STM/LTM) and intelligent evolution capabilities.
 
-## Key Features
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage Examples](#usage-examples)
+- [Architecture](#architecture)
+- [Smart Collections](#smart-collections-advanced)
+- [Temporal Awareness](#temporal-awareness)
+- [Configuration](#configuration)
+- [Use Cases](#use-cases)
+- [Benchmarks](#benchmarks)
+- [Evaluation Framework](#evaluation-framework)
+- [Performance](#deployment-and-performance)
+- [Contributing](#contributing)
+- [Citation](#citation)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
+
+## Features
 
 - **Cognitive Architecture**: Fast STM for recent info + persistent LTM with intelligent processing
 - **Smart Evolution**: Memories automatically connect, merge, and develop relationships over time  
@@ -13,9 +35,43 @@ A memory system for AI agents that stores, retrieves, and evolves information ov
 - **Production-Ready**: Background processing, composite scoring, enterprise-scale performance
 - **Universal Integration**: Works with OpenAI, Ollama, or any LLM/embedding backend
 
-##  Quick Start
+## Installation
 
-**Prerequisites**: Start ChromaDB server first: `chroma run --host localhost --port 8000`
+**Requirements**: Python 3.11+, [Poetry (for dependency management)](https://python-poetry.org/docs/#installation), 4GB+ RAM, OpenAI API key (or Ollama uri for self-hosted)
+
+```bash
+git clone https://github.com/biswaroop1547/cortex.git
+cd cortex
+poetry install
+
+# Set your API key
+echo "OPENAI_API_KEY=your_key_here" > .env
+```
+
+### ChromaDB Server Setup
+
+Cortex requires a persistent ChromaDB server for vector storage. Start it locally:
+
+```bash
+# Install ChromaDB (if not already installed)
+pip install chromadb
+
+# Start ChromaDB server locally
+chroma run --host localhost --port 8003
+
+# Or using Docker
+docker run -p 8000:8000 chromadb/chroma:latest
+```
+
+**Note**: Keep the ChromaDB server running while using Cortex. Data persists automatically across sessions.
+
+## Quick Start
+
+**Prerequisites**:
+Start ChromaDB server first: 
+```bash
+chroma run --host localhost --port 8000
+```
 
 ```python
 from cortex.memory_system import AgenticMemorySystem
@@ -37,7 +93,157 @@ smart_memory = AgenticMemorySystem(
 )
 ```
 
-## Architecture Overview
+## Usage Examples
+
+```python
+from cortex.memory_system import AgenticMemorySystem
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+try:
+    # Initialize the memory system
+    memory_system = AgenticMemorySystem(
+        model_name='all-MiniLM-L6-v2',  # Embedding model
+        llm_backend="openai",           # LLM provider
+        llm_model="gpt-4o-mini",        # LLM model
+        stm_capacity=100,               # STM capacity
+        api_key=os.getenv("OPENAI_API_KEY")
+    )
+
+    # Store a memory
+    memory_id = memory_system.add_note(
+        content="The user prefers morning meetings and uses VS Code for development.",
+        context="User Preferences",
+        tags=["scheduling", "tools"]
+    )
+    print(f"Stored memory with ID: {memory_id}")
+
+    # Search for relevant memories
+    results = memory_system.search_memory(
+        query="What editor does the user prefer?",
+        limit=5
+    )
+
+    # Temporal-aware search (auto-detects "last", "recent", "latest" keywords)
+    recent_results = memory_system.search_memory(
+        query="what did I last discuss with the team?",
+        limit=5  # Automatically applies temporal_weight=0.7 for recency
+    )
+    
+    # Date range filtering
+    date_filtered = memory_system.search_memory(
+        query="team meetings", 
+        limit=5,
+        date_range="last week"  # Database-level temporal filtering
+    )
+    
+    # Manual temporal weighting (0.0=semantic only, 1.0=recency only)
+    custom_temporal = memory_system.search_memory(
+        query="project updates",
+        limit=5,
+        temporal_weight=0.3  # Blend: 70% semantic + 30% recency
+    )
+
+    if results:
+        print("Found relevant memories:")
+        for result in results:
+            print(f"Content: {result['content']}")
+            print(f"Relevance: {result['score']:.3f}")
+            # Check if temporal weighting was applied
+            if hasattr(result, 'temporal_weighted'):
+                print(f"Recency: {result.get('recency_score', 'N/A'):.3f}")
+            print("---")
+    else:
+        print("No relevant memories found")
+
+except Exception as e:
+    print(f"Error initializing Cortex: {e}")
+    print("Please check your API key and environment setup")
+```
+
+### Custom Usage Examples
+
+#### 1. Storing Memories with Auto-analysis
+
+```python
+# Store content - add_note automatically analyzes content for rich metadata
+content = "Neural networks are computational systems inspired by the human brain."
+
+# Store with auto-generated metadata (keywords, context, tags)
+memory_id = memory_system.add_note(
+    content=content,
+    #optionally:
+    # time=timestamp, 
+    # user_id=user_id, 
+    # session_id=session_id,
+    **metadata, # Metadata includes keywords, context, and tags
+)
+```
+
+#### 2. Multi-user Memory Management
+
+```python
+# Store user-specific memories
+memory_system.add_note(
+    content="User prefers dark mode for all interfaces",
+    user_id="user123",
+    session_id="session456"
+)
+
+# Retrieve within user context
+results = memory_system.search_memory(
+    query="user interface preferences",
+    user_id="user123"
+)
+```
+
+#### 3. Context-aware Retrieval
+
+```python
+# Search with context for better relevance
+results = memory_system.search_memory(
+    query="machine learning models",
+    context="Computer Science",
+    limit=10
+)
+
+# Filter by specific criteria
+filtered_results = memory_system.search_memory(
+    query="optimization techniques",
+    where_filter={"tags": {"$contains": "algorithms"}}
+)
+```
+
+### Using the Test CLI
+
+Cortex includes a command-line interface for processing text files and managing memories:
+
+```bash
+# Process a text file and store memories
+python -m cortex.main --input-file data/knowledge.txt
+
+# Load pre-stored memories
+python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
+
+# Query existing memories
+python -m cortex.main --query "What is machine learning?" --limit 5
+```
+
+#### Test CLI Parameters
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `--input-file` | Text file to process | `data/docs.txt` |
+| `--stm-json` | Load STM from JSON | `stm_memories.json` |
+| `--ltm-json` | Load LTM from JSON | `ltm_memories.json` |
+| `--query` | Search query | `"user preferences"` |
+| `--limit` | Max results | `10` |
+| `--skip-storage` | Skip storing new memories | (flag) |
+
+## Architecture
 
 Cortex implements a cognitive architecture based on how human memory works. Here's a high-level overview:
 
@@ -388,6 +594,20 @@ results = memory_system.search_memory(
 ### Temporal Keywords
 Auto-detected keywords: `last`, `recent`, `latest`, `yesterday`, `today`, `this week`, `past`, `ago`
 
+## Configuration
+
+Cortex can be configured in several ways:
+
+```python
+memory_system = AgenticMemorySystem(
+    model_name='all-MiniLM-L6-v2',  # Embedding model
+    llm_backend="openai",          
+    llm_model="gpt-4o-mini",       
+    stm_capacity=100,              
+    api_key=None,
+)
+```
+
 ## Use Cases
 
 ### Personal AI Assistants
@@ -438,202 +658,6 @@ chatbot_system = AgenticMemorySystem(
 )
 ```
 
-## Installation
-
-**Requirements**: Python 3.11+, [Poetry (for dependency management)](https://python-poetry.org/docs/#installation), 4GB+ RAM, OpenAI API key (or Ollama uri for self-hosted)
-
-```bash
-git clone https://github.com/biswaroop1547/cortex.git
-cd cortex
-poetry install
-
-# Set your API key
-echo "OPENAI_API_KEY=your_key_here" > .env
-```
-
-### ChromaDB Server Setup
-
-Cortex requires a persistent ChromaDB server for vector storage. Start it locally:
-
-```bash
-# Install ChromaDB (if not already installed)
-pip install chromadb
-
-# Start ChromaDB server locally
-chroma run --host localhost --port 8003
-
-# Or using Docker
-docker run -p 8000:8000 chromadb/chroma:latest
-```
-
-**Note**: Keep the ChromaDB server running while using Cortex. Data persists automatically across sessions.
-
-## Usage Examples
-
-```python
-from cortex.memory_system import AgenticMemorySystem
-import os
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-try:
-    # Initialize the memory system
-    memory_system = AgenticMemorySystem(
-        model_name='all-MiniLM-L6-v2',  # Embedding model
-        llm_backend="openai",           # LLM provider
-        llm_model="gpt-4o-mini",        # LLM model
-        stm_capacity=100,               # STM capacity
-        api_key=os.getenv("OPENAI_API_KEY")
-    )
-
-    # Store a memory
-    memory_id = memory_system.add_note(
-        content="The user prefers morning meetings and uses VS Code for development.",
-        context="User Preferences",
-        tags=["scheduling", "tools"]
-    )
-    print(f"Stored memory with ID: {memory_id}")
-
-    # Search for relevant memories
-    results = memory_system.search_memory(
-        query="What editor does the user prefer?",
-        limit=5
-    )
-
-    # Temporal-aware search (auto-detects "last", "recent", "latest" keywords)
-    recent_results = memory_system.search_memory(
-        query="what did I last discuss with the team?",
-        limit=5  # Automatically applies temporal_weight=0.7 for recency
-    )
-    
-    # Date range filtering
-    date_filtered = memory_system.search_memory(
-        query="team meetings", 
-        limit=5,
-        date_range="last week"  # Database-level temporal filtering
-    )
-    
-    # Manual temporal weighting (0.0=semantic only, 1.0=recency only)
-    custom_temporal = memory_system.search_memory(
-        query="project updates",
-        limit=5,
-        temporal_weight=0.3  # Blend: 70% semantic + 30% recency
-    )
-
-    if results:
-        print("Found relevant memories:")
-        for result in results:
-            print(f"Content: {result['content']}")
-            print(f"Relevance: {result['score']:.3f}")
-            # Check if temporal weighting was applied
-            if hasattr(result, 'temporal_weighted'):
-                print(f"Recency: {result.get('recency_score', 'N/A'):.3f}")
-            print("---")
-    else:
-        print("No relevant memories found")
-
-except Exception as e:
-    print(f"Error initializing Cortex: {e}")
-    print("Please check your API key and environment setup")
-```
-
-### Custom Usage Examples
-
-#### 1. Storing Memories with Auto-analysis
-
-```python
-# Store content - add_note automatically analyzes content for rich metadata
-content = "Neural networks are computational systems inspired by the human brain."
-
-# Store with auto-generated metadata (keywords, context, tags)
-memory_id = memory_system.add_note(
-    content=content,
-    #optionally:
-    # time=timestamp, 
-    # user_id=user_id, 
-    # session_id=session_id,
-    **metadata, # Metadata includes keywords, context, and tags
-)
-```
-
-#### 2. Multi-user Memory Management
-
-```python
-# Store user-specific memories
-memory_system.add_note(
-    content="User prefers dark mode for all interfaces",
-    user_id="user123",
-    session_id="session456"
-)
-
-# Retrieve within user context
-results = memory_system.search_memory(
-    query="user interface preferences",
-    user_id="user123"
-)
-```
-
-#### 3. Context-aware Retrieval
-
-```python
-# Search with context for better relevance
-results = memory_system.search_memory(
-    query="machine learning models",
-    context="Computer Science",
-    limit=10
-)
-
-# Filter by specific criteria
-filtered_results = memory_system.search_memory(
-    query="optimization techniques",
-    where_filter={"tags": {"$contains": "algorithms"}}
-)
-```
-
-### Using the Test CLI
-
-Cortex includes a command-line interface for processing text files and managing memories:
-
-```bash
-# Process a text file and store memories
-python -m cortex.main --input-file data/knowledge.txt
-
-# Load pre-stored memories
-python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
-
-# Query existing memories
-python -m cortex.main --query "What is machine learning?" --limit 5
-```
-
-#### Test CLI Parameters
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `--input-file` | Text file to process | `data/docs.txt` |
-| `--stm-json` | Load STM from JSON | `stm_memories.json` |
-| `--ltm-json` | Load LTM from JSON | `ltm_memories.json` |
-| `--query` | Search query | `"user preferences"` |
-| `--limit` | Max results | `10` |
-| `--skip-storage` | Skip storing new memories | (flag) |
-
-## Configuration
-
-Cortex can be configured in several ways:
-
-```python
-memory_system = AgenticMemorySystem(
-    model_name='all-MiniLM-L6-v2',  # Embedding model
-    llm_backend="openai",          
-    llm_model="gpt-4o-mini",       
-    stm_capacity=100,              
-    api_key=None,
-)
-```
-
-
-
 ## Memory Evolution and Consolidation
 
 ### Automatic Memory Evolution
@@ -661,33 +685,6 @@ memory_system.update(
 
 
 ```
-
-## Evaluation Framework
-
-Cortex includes a comprehensive evaluation framework for testing memory system performance:
-
-### Running Evaluations
-
-```bash
-# Process memories from dataset
-python run_experiments.py --technique_type cortex --method add
-python run_experiments.py --technique_type cortex --method search
-
-# Evaluate memory retrieval
-python evals.py --input_file results/cortex_results.json --output_file evaluation_metrics.json
-
-# Generate performance scores
-python generate_scores.py --mode original --file evaluation_metrics.json
-```
-
-### Metrics
-
-The evaluation framework provides multiple metrics:
-- **LLM Judge Score**: Semantic correctness evaluated by language models
-- **BLEU Score**: Text similarity between retrieved and expected answers
-- **F1 Score**: Precision and recall of relevant information
-- **Retrieval Time**: Memory access and processing latency
-- **Token Efficiency**: Context window utilization optimization
 
 ## Benchmarks
 
@@ -741,7 +738,7 @@ The following visualizations demonstrate Cortex's performance characteristics ac
 ![Token vs Performance Correlation](evaluation/results_july/token_count_vs_llm_score.png)
 *Figure 4: Token count vs LLM score correlation, color-coded by top-k values* -->
 
-![Comprehensive Analysis](evaluation/results_july/cortex_evaluation_comprehensive_analysis.png)
+![Comprehensive Analysis](evaluation/results/cortex_evaluation_comprehensive_analysis.png)
 *Figure 1: Comprehensive evaluation analysis across all performance metrics*
 
 ### Evaluation Methodology
@@ -755,6 +752,33 @@ Our scripts are in the [evaluation](evaluation/src/cortex/) directory.
 - **Metrics**: BLEU score, F1 score, LLM-as-a-Judge binary correctness
 - **Latency**: Measured p50 and p95 percentiles for search and total response time
 - **Comparison**: Direct comparison with 8 state-of-the-art memory systems
+
+## Evaluation Framework
+
+Cortex includes a comprehensive evaluation framework for testing memory system performance:
+
+### Running Evaluations
+
+```bash
+# Process memories from dataset
+python run_experiments.py --technique_type cortex --method add
+python run_experiments.py --technique_type cortex --method search
+
+# Evaluate memory retrieval
+python evals.py --input_file results/cortex_results.json --output_file evaluation_metrics.json
+
+# Generate performance scores
+python generate_scores.py --mode original --file evaluation_metrics.json
+```
+
+### Metrics
+
+The evaluation framework provides multiple metrics:
+- **LLM Judge Score**: Semantic correctness evaluated by language models
+- **BLEU Score**: Text similarity between retrieved and expected answers
+- **F1 Score**: Precision and recall of relevant information
+- **Retrieval Time**: Memory access and processing latency
+- **Token Efficiency**: Context window utilization optimization
 
 ## Deployment and Performance
 
@@ -783,8 +807,6 @@ memory_system = AgenticMemorySystem(
 - **Concurrent Users**: Thread-safe operations support multiple users
 - **Background Processing**: Can be disabled for high-throughput scenarios
 
-
-
 ## Contributing
 
 We welcome contributions! Here's how to get started:
@@ -806,7 +828,6 @@ We welcome contributions! Here's how to get started:
    pytest tests/
    ```
 
-
 ### Areas to improve
 
 - **MultiModal Support**: Add support for multi-modal memories (text, images, audio, video)
@@ -815,19 +836,6 @@ We welcome contributions! Here's how to get started:
 - **Memory Strategies**: New memory evolution and consolidation algorithms
 - **Performance**: Optimization and caching improvements
 - **Documentation**: Examples, tutorials, and use case guides
-
-## Acknowledgments
-
-- [A-MEM](https://github.com/agiresearch/A-mem) for the base memory system relationship and evolution logic
-- [mem0](https://github.com/mem0ai/mem0) for the evaluation scripts and benchmarks
-- [LoCoMo10](https://github.com/mem0ai/mem0/tree/main/evaluation/datasets/LoCoMo10) for the dataset
-- [ChromaDB](https://www.trychroma.com/) for the vector database
-- [OpenAI](https://openai.com/) and [Ollama](https://ollama.ai/) for the LLM backends
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 
 ## Citation
 
@@ -841,3 +849,15 @@ If you use Cortex in your research or applications, please cite:
   url={https://github.com/biswaroop1547/cortex}
 }
 ```
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [A-MEM](https://github.com/agiresearch/A-mem) for the base memory system relationship and evolution logic
+- [mem0](https://github.com/mem0ai/mem0) for the evaluation scripts and benchmarks
+- [LoCoMo10](https://github.com/mem0ai/mem0/tree/main/evaluation/datasets/LoCoMo10) for the dataset
+- [ChromaDB](https://www.trychroma.com/) for the vector database
+- [OpenAI](https://openai.com/) and [Ollama](https://ollama.ai/) for the LLM backends
