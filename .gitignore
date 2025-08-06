@@ -174,7 +174,7 @@ cython_debug/
 .pypirc
 
 # custom
-evaluation/results*/**
+evaluation/results_*/**
 evaluation/memory_state/**
 evaluation/dataset/**
 .env
