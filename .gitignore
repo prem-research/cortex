@@ -177,3 +177,5 @@ cython_debug/
 evaluation/results*/**
 evaluation/memory_state/**
 evaluation/dataset/**
+.env
+chroma_data/

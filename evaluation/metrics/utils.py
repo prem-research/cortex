@@ -20,8 +20,6 @@ from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from nltk.translate.meteor_score import meteor_score
 from rouge_score import rouge_scorer
 from sentence_transformers import SentenceTransformer
-
-# from load_dataset import load_locomo_dataset, QA, Turn, Session, Conversation
 from sentence_transformers.util import pytorch_cos_sim
 
 # Download required NLTK data
@@ -45,7 +43,7 @@ def simple_tokenize(text):
     return text.lower().replace('.', ' ').replace(',', ' ').replace('!', ' ').replace('?', ' ').split()
 
 def calculate_rouge_scores(prediction: str, reference: str) -> Dict[str, float]:
-    """Calculate ROUGE scores for prediction against reference."""
+    """ROUGE scores for prediction against reference."""
     scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     scores = scorer.score(reference, prediction)
     return {
@@ -55,7 +53,7 @@ def calculate_rouge_scores(prediction: str, reference: str) -> Dict[str, float]:
     }
 
 def calculate_bleu_scores(prediction: str, reference: str) -> Dict[str, float]:
-    """Calculate BLEU scores with different n-gram settings."""
+    """BLEU scores with different n-gram settings."""
     pred_tokens = nltk.word_tokenize(prediction.lower())
     ref_tokens = [nltk.word_tokenize(reference.lower())]
     
@@ -74,7 +72,7 @@ def calculate_bleu_scores(prediction: str, reference: str) -> Dict[str, float]:
     return scores
 
 def calculate_bert_scores(prediction: str, reference: str) -> Dict[str, float]:
-    """Calculate BERTScore for semantic similarity."""
+    """BERTScore for semantic similarity."""
     try:
         P, R, F1 = bert_score([prediction], [reference], lang='en', verbose=False)
         return {
@@ -91,7 +89,7 @@ def calculate_bert_scores(prediction: str, reference: str) -> Dict[str, float]:
         }
 
 def calculate_meteor_score(prediction: str, reference: str) -> float:
-    """Calculate METEOR score for the prediction."""
+    """METEOR score for the prediction."""
     try:
         return meteor_score([reference.split()], prediction.split())
     except Exception as e:
@@ -99,7 +97,7 @@ def calculate_meteor_score(prediction: str, reference: str) -> float:
         return 0.0
 
 def calculate_sentence_similarity(prediction: str, reference: str) -> float:
-    """Calculate sentence embedding similarity using SentenceBERT."""
+    """sentence embedding similarity using SentenceBERT."""
     if sentence_model is None:
         return 0.0
     try:
@@ -115,7 +113,7 @@ def calculate_sentence_similarity(prediction: str, reference: str) -> float:
         return 0.0
 
 def calculate_metrics(prediction: str, reference: str) -> Dict[str, float]:
-    """Calculate comprehensive evaluation metrics for a prediction."""
+    """comprehensive evaluation metrics for a prediction."""
     # Handle empty or None values
     if not prediction or not reference:
         return {
@@ -165,7 +163,7 @@ def calculate_metrics(prediction: str, reference: str) -> Dict[str, float]:
     return metrics
 
 def aggregate_metrics(all_metrics: List[Dict[str, float]], all_categories: List[int]) -> Dict[str, Dict[str, Union[float, Dict[str, float]]]]:
-    """Calculate aggregate statistics for all metrics, split by category."""
+    """aggregate statistics for all metrics, split by category."""
     if not all_metrics:
         return {}
     
