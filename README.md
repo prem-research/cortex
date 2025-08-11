@@ -945,7 +945,7 @@ If you use Cortex in your research or applications, please cite:
   title={Cortex: Advanced Memory System for AI Agents},
   author={Bhattacharjee, Biswaroop},
   year={2025},
-  url={https://github.com/biswaroop1547/cortex}
+  url={https://github.com/prem-research/cortex}
 }
 ```
 
