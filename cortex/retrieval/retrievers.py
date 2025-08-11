@@ -60,10 +60,21 @@ class ChromaRetriever:
             logger.debug(f"Skipping add for unchanged document: {doc_id}")
             return
         processed_metadata = {}
+        # Derive a numeric timestamp for efficient range queries, store as timestamp_epoch
+        if 'timestamp' in metadata and metadata.get('timestamp'):
+            try:
+                from datetime import datetime
+                ts = str(metadata['timestamp']).replace('Z', '+00:00')
+                processed_metadata['timestamp_epoch'] = datetime.fromisoformat(ts).timestamp()
+            except Exception:
+                pass
         for key, value in metadata.items():
             if value is None:
                 continue
-                
+            # Preserve numeric/boolean types for range/equality filters
+            if isinstance(value, (int, float, bool)):
+                processed_metadata[key] = value
+                continue
             if key == 'links' and isinstance(value, dict):
                 processed_metadata[key] = json.dumps(value)
             elif isinstance(value, list):
@@ -170,15 +181,18 @@ class ChromaRetriever:
             if not query and where_filter:
                 results = self.collection.get(
                     where=where_filter,
-                    limit=k,
                     include=['metadatas', 'documents']
                 )
                 if results and results.get('ids'):
+                    # Respect k by truncating
+                    ids = results.get('ids', [])[:k]
+                    metadatas = results.get('metadatas', [])[:k] if results.get('metadatas') else []
+                    documents = results.get('documents', [])[:k] if results.get('documents') else []
                     results = {
-                        'ids': [results['ids']],
-                        'metadatas': [results['metadatas']] if results.get('metadatas') else [[]],
-                        'documents': [results['documents']] if results.get('documents') else [[]],
-                        'distances': [[0.0] * len(results['ids'])]
+                        'ids': [ids],
+                        'metadatas': [metadatas],
+                        'documents': [documents],
+                        'distances': [[0.0] * len(ids)]
                     }
                 else:
                     results = {'ids': [[]], 'metadatas': [[]], 'documents': [[]], 'distances': [[]]}

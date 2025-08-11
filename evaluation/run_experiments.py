@@ -10,11 +10,12 @@ from src.cortex.search import CortexSearch
 # from src.langmem import LangMemManager
 # from src.memzero.add import MemoryADD
 # from src.memzero.search import MemorySearch
-# from src.openai.predict import OpenAIPredict
+from src.openai.predict import OpenAIPredict
 from src.rag import RAGManager
 from src.utils import METHODS, TECHNIQUES
 # from src.zep.add import ZepAdd
 # from src.zep.search import ZepSearch
+from src.full_context import FullContextPredict
 
 
 class Experiment:
@@ -36,9 +37,9 @@ def main():
                         help='Run search only (skip add phase) - requires existing persistent data')
     parser.add_argument('--chunk_size', type=int, default=1000,
                         help='Chunk size for processing')
-    parser.add_argument('--output_folder', type=str, default='results_july_2/',
+    parser.add_argument('--output_folder', type=str, default='results_august_2/',
                         help='Output path for results')
-    parser.add_argument('--top_k', type=int, default=15,
+    parser.add_argument('--top_k', type=int, default=10,
                         help='Number of top memories to retrieve')
     parser.add_argument('--filter_memories', action='store_true', default=False,
                         help='Whether to filter memories')
@@ -53,24 +54,8 @@ def main():
     print(f"Running experiments with technique: {args.technique_type}, chunk size: {args.chunk_size}")
 
     if args.technique_type == "mem0":
-        if args.method == "add":
-            memory_manager = MemoryADD(
-                data_path='dataset/locomo10.json',
-                is_graph=args.is_graph
-            )
-            memory_manager.process_all_conversations()
-        elif args.method == "search":
-            output_file_path = os.path.join(
-                args.output_folder,
-                f"mem0_results_top_{args.top_k}_filter_{args.filter_memories}_graph_{args.is_graph}.json"
-            )
-            memory_searcher = MemorySearch(
-                output_file_path,
-                args.top_k,
-                args.filter_memories,
-                args.is_graph
-            )
-            memory_searcher.process_data_file('dataset/locomo10.json')
+        print("mem0 path not implemented in this workspace.")
+        return
     elif args.technique_type == "cortex":
         memory_manager = None
         try:
@@ -84,7 +69,7 @@ def main():
                 memory_searcher = CortexSearch(
                     output_file_path,
                     args.top_k,
-                    memory_system=None  # Let it create its own connection to persistent ChromaDB
+                    memory_system=None  # Let it create its own connection to persistent vector DB
                 )
                 memory_searcher.process_data_file_parallel('dataset/locomo10.json', max_workers=10, checkpoint_interval=5)
                 print("CORTEX SEARCH EXPERIMENT COMPLETED")
@@ -118,25 +103,21 @@ def main():
         )
         rag_manager.process_all_conversations(output_file_path)
     elif args.technique_type == "langmem":
-        output_file_path = os.path.join(args.output_folder, "langmem_results.json")
-        langmem_manager = LangMemManager(dataset_path="dataset/locomo10_rag.json")
-        langmem_manager.process_all_conversations(output_file_path)
+        print("langmem path not implemented in this workspace.")
+        return
     elif args.technique_type == "zep":
-        if args.method == "add":
-            zep_manager = ZepAdd(data_path="dataset/locomo10.json")
-            zep_manager.process_all_conversations("1")
-        elif args.method == "search":
-            output_file_path = os.path.join(args.output_folder, "zep_search_results.json")
-            zep_manager = ZepSearch()
-            zep_manager.process_data_file(
-                "dataset/locomo10.json",
-                "1",
-                output_file_path
-            )
+        print("zep path not implemented in this workspace.")
+        return
     elif args.technique_type == "openai":
         output_file_path = os.path.join(args.output_folder, "openai_results.json")
         openai_manager = OpenAIPredict()
         openai_manager.process_data_file("dataset/locomo10.json", output_file_path)
+    elif args.technique_type == "fullcontext":
+        print("STARTING FULL-CONTEXT EXPERIMENT")
+        output_file_path = os.path.join(args.output_folder, "fullcontext_results.json")
+        predictor = FullContextPredict()
+        predictor.process_data_file_parallel("dataset/locomo10.json", output_file_path, max_workers=10, checkpoint_interval=5)
+        print("FULL-CONTEXT EXPERIMENT COMPLETED")
     else:
         raise ValueError(f"Invalid technique type: {args.technique_type}")
 

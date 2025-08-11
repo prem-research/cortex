@@ -4,10 +4,12 @@ TECHNIQUES = [
     "langmem",
     "zep",
     "openai",
-    "cortex"
+    "cortex",
+    "fullcontext",
 ]
 
 METHODS = [
     "add",
-    "search"
+    "search",
+    "run",
 ]

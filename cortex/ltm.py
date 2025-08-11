@@ -2,6 +2,7 @@ from typing import List, Dict, Optional, Any
 import threading
 import json
 import logging
+from datetime import datetime
 from cortex.stm import MemoryTier
 from cortex.retrieval.retrievers import ChromaRetriever
 from cortex.constants import DEFAULT_EMBEDDING_MODEL, DEFAULT_CHROMA_URI
@@ -46,7 +47,7 @@ class LongTermMemory(MemoryTier):
             return self.collections[collection_name]
     
     def add(self, memory_id: str, content: str, metadata: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
-        """ a memory to long-term storage"""
+        """ add memory to long-term storage"""
         collection = self._get_collection(user_id, session_id)
         
         if user_id is not None and "user_id" not in metadata:
@@ -121,10 +122,18 @@ class LongTermMemory(MemoryTier):
                 for coll_name in user_collections:
                     try:
                         coll = self.collections[coll_name]
+                        # Combine original where_filter with user_id filter using $and when needed
+                        combined_filter = {"user_id": {"$eq": user_id}}
+                        if where_filter:
+                            if isinstance(where_filter, dict) and "$and" in where_filter and isinstance(where_filter["$and"], list):
+                                combined_filter = {"$and": where_filter["$and"] + [{"user_id": {"$eq": user_id}}]}
+                            else:
+                                combined_filter = {"$and": [where_filter, {"user_id": {"$eq": user_id}}]}
+
                         user_results = coll.search(
-                            query, 
-                            k=limit, 
-                            where_filter={"user_id": {"$eq": user_id}}
+                            query,
+                            k=limit,
+                            where_filter=combined_filter,
                         )
                         all_results.extend(user_results)
                     except Exception as e:
