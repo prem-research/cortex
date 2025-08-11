@@ -207,33 +207,33 @@ class AgenticMemorySystem:
                 {content}"""
         else:
             prompt = """Generate a structured analysis of the following content by:
-            1. Identifying the most salient keywords (focus on nouns, verbs, and key concepts)
-            2. Extracting core themes and contextual elements
-            3. Creating relevant categorical tags
+                1. Identifying the most salient keywords (focus on nouns, verbs, and key concepts)
+                2. Extracting core themes and contextual elements
+                3. Creating relevant categorical tags
 
-            Format the response as a JSON object:
-            {
-                "keywords": [
-                    // several specific, distinct keywords that capture key concepts and terminology
-                    // Order from most to least important
-                    // Don't include keywords that are the name of the speaker or time
-                    // At least three keywords, but don't be too redundant.
-                ],
-                "context": 
-                    // one sentence summarizing:
-                    // - Main topic/domain
-                    // - Key arguments/points
-                    // - Intended audience/purpose
-                ,
-                "tags": [
-                    // several broad categories/themes for classification
-                    // Include domain, format, and type tags
-                    // At least three tags, but don't be too redundant.
-                ]
-            }
+                Format the response as a JSON object:
+                {
+                    "keywords": [
+                        // several specific, distinct keywords that capture key concepts and terminology
+                        // Order from most to least important
+                        // Don't include keywords that are the name of the speaker or time
+                        // At least three keywords, but don't be too redundant.
+                    ],
+                    "context": 
+                        // one sentence summarizing:
+                        // - Main topic/domain
+                        // - Key arguments/points
+                        // - Intended audience/purpose
+                    ,
+                    "tags": [
+                        // several broad categories/themes for classification
+                        // Include domain, format, and type tags
+                        // At least three tags, but don't be too redundant.
+                    ]
+                }
 
-            Content for analysis:
-            """ + content
+                Content for analysis:
+                """ + content
         try:
             response_schema = {"type": "json_schema", "json_schema": {
                         "name": "response",
@@ -257,12 +257,12 @@ class AgenticMemorySystem:
                                 }
                             },
                             "required": ["keywords", "context", "tags"]
-                        }
+                            }
                     }}
             if self.enable_smart_collections:
                 response_schema["json_schema"]["schema"]["properties"]["category"] = {
                     "type": "string"
-                }
+                        }
                 response_schema["json_schema"]["schema"]["required"].append("category")
             response = self.llm_controller.llm.get_completion(prompt, response_format=response_schema)
             return json.loads(response)

@@ -68,6 +68,7 @@ class ChromaRetriever:
                 processed_metadata['timestamp_epoch'] = datetime.fromisoformat(ts).timestamp()
             except Exception:
                 pass
+        processed_metadata["doc_id"] = doc_id
         for key, value in metadata.items():
             if value is None:
                 continue
@@ -121,24 +122,41 @@ class ChromaRetriever:
             return None
             
         try:
-            results = self.collection.get(
-                ids=[doc_id],
-                include=['documents', 'metadatas']
-            )
-            
-            if results and results.get('ids') and len(results['ids']) > 0:
-                metadata = results['metadatas'][0] if results.get('metadatas') else {}
-                document = results['documents'][0] if results.get('documents') else ""
-                
-                return {
-                    'id': doc_id,
-                    'metadata': metadata,
-                    'document': document,
-                    'distance': 0.0
-                }
+            # First try metadata-based lookup using stored doc_id to avoid server get/id bugs
+            results = self.collection.get(where={"doc_id": {"$eq": doc_id}}, include=['documents', 'metadatas'])
+            if results and results.get('metadatas'):
+                metas = results.get('metadatas') or []
+                docs = results.get('documents') or []
+                if metas:
+                    metadata = metas[0]
+                    document = docs[0] if docs else ""
+                    return {
+                        'id': doc_id,
+                        'metadata': metadata,
+                        'document': document,
+                        'distance': 0.0
+                    }
+            # fallback to direct ID lookup
+            try:
+                results = self.collection.get(ids=[doc_id], include=['documents', 'metadatas'])
+                if results and results.get('ids'):
+                    ids = results.get('ids') or []
+                    docs = results.get('documents') or []
+                    metas = results.get('metadatas') or []
+                    if ids:
+                        metadata = metas[0] if metas else {}
+                        document = docs[0] if docs else ""
+                        return {
+                            'id': doc_id,
+                            'metadata': metadata,
+                            'document': document,
+                            'distance': 0.0
+                        }
+            except Exception as inner:
+                logger.debug(f"Chroma get(ids=...) failed for {doc_id} in '{self.collection_name}': {inner}")
                 
         except Exception as e:
-            logger.error(f"Error getting document {doc_id} from '{self.collection_name}': {e}")
+            logger.debug(f"Error getting document {doc_id} from '{self.collection_name}': {e}")
             
         return None
     
