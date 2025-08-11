@@ -13,21 +13,20 @@ plt.style.use('default')
 sns.set_palette("husl")
 
 # Define the results directory
-results_dir = Path('results_july')
+results_dir = Path('results_august')
 
 # Performance metrics provided by user
 performance_metrics = {
-    2: {'memory_time': 3.875, 'questions': 1986, 'normal_memories': 2.0, 'linked_memories': 1.9, 'token_count': 478.7},
-    5: {'memory_time': 4.064, 'questions': 1986, 'normal_memories': 5.0, 'linked_memories': 4.9, 'token_count': 1006.6},
-    10: {'memory_time': 4.075, 'questions': 1986, 'normal_memories': 10.0, 'linked_memories': 10.0, 'token_count': 1908.3},
-    15: {'memory_time': 3.940, 'questions': 1986, 'normal_memories': 15.0, 'linked_memories': 15.0, 'token_count': 2813.7},
-    20: {'memory_time': 3.942, 'questions': 1986, 'normal_memories': 20.0, 'linked_memories': 20.0, 'token_count': 3721.4},
-    25: {'memory_time': 4.365, 'questions': 1986, 'normal_memories': 25.0, 'linked_memories': 25.0, 'token_count': 4612.4},
-    30: {'memory_time': 3.691, 'questions': 1986, 'normal_memories': 30.0, 'linked_memories': 30.0, 'token_count': 5520.8},
-    35: {'memory_time': 4.522, 'questions': 1986, 'normal_memories': 35.0, 'linked_memories': 35.0, 'token_count': 6419.6},
-    40: {'memory_time': 4.390, 'questions': 1986, 'normal_memories': 40.0, 'linked_memories': 40.0, 'token_count': 7326.0},
-    45: {'memory_time': 3.2, 'questions': 1986, 'normal_memories': 45.0, 'linked_memories': 45.0, 'token_count': 8214.9},
-    50: {'memory_time': 3.652, 'questions': 1986, 'normal_memories': 50.0, 'linked_memories': 50.0, 'token_count': 9132.8}
+    10: {'memory_time': 8.32, 'questions': 1986, 'normal_memories': 10.0, 'linked_memories': 9.9, 'token_count': 1982.3},
+    15: {'memory_time': 8.55, 'questions': 1986, 'normal_memories': 15.0, 'linked_memories': 14.9, 'token_count': 2900.8},
+    20: {'memory_time': 8.88, 'questions': 1986, 'normal_memories': 20.0, 'linked_memories': 19.9, 'token_count': 3824.3},
+    25: {'memory_time': 8.73, 'questions': 1986, 'normal_memories': 25.0, 'linked_memories': 25.0, 'token_count': 4745.6},
+    30: {'memory_time': 9.04, 'questions': 1986, 'normal_memories': 30.0, 'linked_memories': 30.0, 'token_count': 5662.5},
+    35: {'memory_time': 9.18, 'questions': 1986, 'normal_memories': 35.0, 'linked_memories': 35.0, 'token_count': 6569.0},
+    40: {'memory_time': 9.31, 'questions': 1986, 'normal_memories': 40.0, 'linked_memories': 40.0, 'token_count': 7480.1},
+    45: {'memory_time': 9.47, 'questions': 1986, 'normal_memories': 45.0, 'linked_memories': 45.0, 'token_count': 8397.5},
+    50: {'memory_time': 9.62, 'questions': 1986, 'normal_memories': 50.0, 'linked_memories': 50.0, 'token_count': 9304.2},
+    55: {'memory_time': 9.02, 'questions': 1986, 'normal_memories': 55.0, 'linked_memories': 55.0, 'token_count': 10220.3},
 }
 
 def extract_top_k_from_filename(filename):
@@ -300,7 +299,7 @@ def run_comprehensive_analysis():
     token_llm_path = results_dir / 'token_count_vs_llm_score.png'
     plt.savefig(token_llm_path, dpi=300, bbox_inches='tight')
     
-    print("\nIndividual plots saved in results_july/:")
+    print(f"\nIndividual plots saved in {results_dir}/:")
     print(f"- {overall_path}")
     print(f"- {llm_path}")
     print(f"- {efficiency_path}")

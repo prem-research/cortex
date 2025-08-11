@@ -16,7 +16,7 @@ run-rag:
 	python run_experiments.py --technique_type rag --chunk_size 500 --num_chunks 1 --output_folder results/
 
 run-full-context:
-	python run_experiments.py --technique_type rag --chunk_size -1 --num_chunks 1 --output_folder results/
+	python run_experiments.py --technique_type fullcontext --output_folder results_august_fullcontext/
 
 run-langmem:
 	python run_experiments.py --technique_type langmem --output_folder results/

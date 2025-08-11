@@ -217,6 +217,108 @@ filtered_results = memory_system.search_memory(
 )
 ```
 
+
+### LangChain Tool Demo (Add + Search)
+
+```python
+import os
+from typing import Optional, List, Dict, Any
+from datetime import datetime
+from pydantic import BaseModel, Field
+from langchain.tools import StructuredTool
+from cortex.memory_system import AgenticMemorySystem
+
+# Initialize Cortex (enables smart collections if OPENAI_API_KEY is set)
+api_key = os.getenv("OPENAI_API_KEY")
+memory = AgenticMemorySystem(
+    api_key=api_key,
+    enable_smart_collections=bool(api_key),
+    model_name="all-MiniLM-L6-v2",
+    enable_background_processing=False,
+)
+
+class CortexAddNoteInput(BaseModel):
+    content: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    time: Optional[str] = Field(default=None, description="RFC3339 timestamp")
+    context: Optional[str] = None
+    tags: Optional[List[str]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class CortexSearchInput(BaseModel):
+    query: str
+    limit: int = Field(default=10, ge=1, le=50)
+    memory_source: str = Field(default="all")
+    temporal_weight: float = Field(default=0.0, ge=0.0, le=1.0)
+    date_range: Optional[str] = None
+    where_filter: Optional[Dict[str, Any]] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+def add_fn(content: str, user_id: Optional[str] = None, session_id: Optional[str] = None, time: Optional[str] = None, context: Optional[str] = None, tags: Optional[List[str]] = None, metadata: Optional[Dict[str, Any]] = None):
+    return memory.add_note(
+        content=content,
+        user_id=user_id,
+        session_id=session_id,
+        time=time,
+        context=context,
+        tags=tags,
+        **(metadata or {}),
+    )
+
+def search_fn(query: str, limit: int = 10, memory_source: str = "all", temporal_weight: float = 0.0, date_range: Optional[str] = None, where_filter: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None, session_id: Optional[str] = None):
+    return memory.search(
+        query=query,
+        limit=limit,
+        memory_source=memory_source,
+        temporal_weight=temporal_weight,
+        date_range=date_range,
+        where_filter=where_filter,
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+cortex_add_note = StructuredTool.from_function(
+    name="cortex_add_note",
+    description="Store a memory note",
+    func=add_fn,
+    args_schema=CortexAddNoteInput,
+)
+
+cortex_search = StructuredTool.from_function(
+    name="cortex_search",
+    description="Search memories (supports temporal/date filters & metadata filters)",
+    func=search_fn,
+    args_schema=CortexSearchInput,
+)
+
+# Seed memory
+_ = cortex_add_note.invoke({
+    "content": "User prefers TypeScript over JavaScript",
+    "user_id": "user_123",
+    "session_id": "onboarding",
+    "time": datetime.now().astimezone().isoformat(),
+    "context": "preferences.programming",
+    "tags": ["typescript", "language"],
+    "metadata": {"source": "chat"},
+})
+
+# Demo search (matches newsletter + test script)
+results = cortex_search.invoke({
+    "query": "programming preferences",
+    "limit": 5,
+    "memory_source": "all",
+    "temporal_weight": 0.2,
+    "date_range": "last week",
+    "where_filter": {"context": {"$eq": "preferences.programming"}},
+    "user_id": "user_123",
+    "session_id": "onboarding",
+})
+print(f"Top result: {results[0]['content'][:60]}..." if results else "No results")
+```
+
+
 ### Using the Test CLI
 
 Cortex includes a command-line interface for processing text files and managing memories:
@@ -690,56 +792,51 @@ memory_system.update(
 
 Cortex has been extensively evaluated on the LoCoMo10 dataset, a comprehensive conversational memory benchmark that tests memory recall and understanding across various question types and complexity levels.
 
-### Performance Comparison with State-of-the-Art Methods
+### Performance Summary
 
-Cortex demonstrates competitive performance against established memory systems and retrieval methods:
+Cortex delivers state-of-the-art accuracy at comparable token budgets while trading higher latency for intelligence (Smart Collections + Evolved analysis).
 
-| Method | Memory Tokens/Chunks | Overall LLM Score |
-|--------|---------------------|------------------|
-| **Cortex (top-25)** | **~4,612** | **67.66%** |
-| **Cortex (top-20)** | **~3,721** | **64.94%** |
-| **Cortex (top-10)** | **~1,908** | **58.12%** |
-| Full-context | 26,031 | 72.90% |
-| Mem0δ | 3,616 | 68.44% |
-| Mem0 | 1,764 | 66.88% |
-| Zep | 3,911 | 65.99% |
-| RAG (best config) | 256 | 60.97% |
-| LangMem | 127 | 58.10% |
-| OpenAI | 4,437 | 52.90% |
-| A-Mem | 2,520 | 48.38% |
+| Method | Avg Tokens | LLM Score |
+|--------|------------|-----------|
+| Cortex (top-20) | ~4,000 | 0.706 |
+| Cortex (top-25) | ~4,500 | 0.707 |
+| Cortex (top-35) | ~7,000 | 0.731 |
+| Cortex (top-45) | ~8,400 | 0.732 |
+| Mem0 | 3,616 | 0.684 |
+| Full-context (all turns) | ~26,000 | 0.8266 |
 
-**Note:** The memory time is variable (taking ~2.5s) because there's a LLM call that happens for query analysis after which retrieval happens.
-
-**Key Competitive Advantages:**
-- **Balanced Performance**: Competitive accuracy with efficient token usage
-- **Flexible Scaling**: Performance scales with memory retrieval count (58.12% at top-10, 64.94% at top-20, 67.66% at top-25)
+- At ~4k tokens (Top‑K 20), Cortex 0.706 vs Mem0 0.684 — higher accuracy at a similar token budget
+- At ~4.5k tokens (Top‑K 25), Cortex 0.707 vs Mem0 0.684 — maintains lead with modest token growth
+- At ~3k tokens (Top‑K 15), Cortex 0.682 vs Mem0 0.684 — near parity while using fewer tokens
+- Reference upper bound: Full‑context 0.8266 (all turns). Cortex reaches 0.731 at Top‑K 35 (~7k tokens)
+- Latency trade‑off: ~2s with Smart Collections disabled; ~2–8s with Smart Collections enabled
 
 ### Detailed LoCoMo10 Dataset Results
 
-| Top-K | BLEU Score | F1 Score | LLM Score | Memory Time (ms) | Token Count |
-|-------|------------|----------|-----------|------------------|-------------|
-| 10    | 0.3187     | 0.3833   | 0.5812    | 4,075           | 1,908       |
-| 20    | 0.3606     | 0.4360   | 0.6494    | 3,942           | 3,721       |
-| 25    | 0.3731     | 0.4522   | 0.6766    | 4,365           | 4,612       |
+| Top-K | LLM Score | Avg Token Count |
+|------:|----------:|----------------:|
+| 10 | 0.671 | ~2,000 |
+| 15 | 0.682 | ~3,000 |
+| 20 | 0.706 | ~4,000 |
+| 25 | 0.707 | ~4,500 |
+| 30 | 0.725 | ~6,000 |
+| 35 | 0.731 | ~7,000 |
+| 40 | 0.727 | ~7,800 |
+| 45 | 0.732 | ~8,400 |
+
+### Comparison Highlights (from evaluation figures)
+
+- Zep: 0.660 at ~3,911 tokens
+- LangMem: 0.581 at 127 tokens
+- A‑Mem: 0.483 at ~2,520 tokens
+- OpenAI baseline: 0.529 at ~4,437 tokens
+- Full‑context: 0.8266 at ~26k tokens (all turns)
 
 ### Performance Visualizations
 
 The following visualizations demonstrate Cortex's performance characteristics across different configurations:
 
-<!-- ![Overall Performance vs Top-K](evaluation/results_july/overall_scores_vs_top_k.png)
-*Figure 1: Overall performance metrics (BLEU, F1, LLM scores) showing consistent improvement with increased memory retrieval*
-
-![LLM Score Detailed Analysis](evaluation/results_july/llm_score_vs_top_k.png)
-*Figure 2: LLM judge scores demonstrating linear scaling across different top-k values*
-
-![Efficiency Analysis](evaluation/results_july/score_efficiency_vs_top_k.png)
-*Figure 3: Score efficiency (LLM Score / Memory Time) showing optimal performance balance*
-
-![Token vs Performance Correlation](evaluation/results_july/token_count_vs_llm_score.png)
-*Figure 4: Token count vs LLM score correlation, color-coded by top-k values* -->
-
 ![Comprehensive Analysis](evaluation/results/cortex_evaluation_comprehensive_analysis.png)
-*Figure 1: Comprehensive evaluation analysis across all performance metrics*
 
 ### Evaluation Methodology
 
@@ -750,8 +847,10 @@ Our scripts are in the [evaluation](evaluation/src/cortex/) directory.
 - **Dataset**: LoCoMo10 conversational memory benchmark
 - **Questions**: 1,540 evaluated questions across multiple categories (after filtering)
 - **Metrics**: BLEU score, F1 score, LLM-as-a-Judge binary correctness
-- **Latency**: Measured p50 and p95 percentiles for search and total response time
-- **Comparison**: Direct comparison with 8 state-of-the-art memory systems
+- **Latency**: Cortex adds internal LLM calls (collection discovery, query transformation, evolution).
+  - ~2s with Smart Collections disabled
+  - ~2–8s with Smart Collections enabled
+- **Comparison**: Competitive or better than alternatives at similar token budgets
 
 ## Evaluation Framework
 

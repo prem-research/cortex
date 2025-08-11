@@ -1,16 +1,3 @@
-"""
-Unified embedding manager supporting both OpenAI and local SentenceTransformers models.
-
-Features:
-- Automatic model type detection (OpenAI vs local)
-- Thread-safe singleton pattern for efficient resource reuse
-- Consistent embeddings across all components  
-- Automatic batching for multiple text processing
-- Memory-efficient processing with caching
-- Error handling and fallbacks
-- Seamless switching between embedding backends
-"""
-
 import threading
 from typing import List, Dict, Optional
 import logging
@@ -34,7 +21,6 @@ class EmbeddingManager:
     _lock = threading.Lock()
 
     def __new__(cls, model_name: str = DEFAULT_EMBEDDING_MODEL):
-        """Singleton pattern: return existing instance or create new one."""
         with cls._lock:
             if model_name not in cls._instances:
                 instance = super().__new__(cls)
@@ -88,10 +74,8 @@ class EmbeddingManager:
     def get_embedding_dimension(self) -> int:
         """ the dimension of embeddings for this model."""
         if self.is_local and hasattr(self, 'model'):
-            # For local models, get dimension from loaded model
             return self.model.get_sentence_embedding_dimension()
         else:
-            # Use predefined dimensions from constants
             return get_embedding_dimension(self.model_name)
 
     def get_embedding(self, content: str) -> List[float]:
@@ -111,7 +95,7 @@ class EmbeddingManager:
             return [0.0] * self.get_embedding_dimension()
 
     def _get_openai_embedding(self, content: str) -> List[float]:
-        """ OpenAI embedding"""
+        """ get OpenAI embedding"""
         response = self.client.embeddings.create(
             model=self.model_name,
             input=content
@@ -119,7 +103,7 @@ class EmbeddingManager:
         return response.data[0].embedding
 
     def _get_local_embedding(self, content: str) -> List[float]:
-        """ local SentenceTransformers embedding"""
+        """ get local SentenceTransformers embedding"""
         embedding = self.model.encode(content)
         return embedding.tolist()
 
@@ -128,7 +112,6 @@ class EmbeddingManager:
         if not contents:
             return []
         
-        # Prepare contents and track empty ones
         processed_contents = []
         empty_indices = []
         
@@ -151,12 +134,11 @@ class EmbeddingManager:
             return [[0.0] * dim for _ in contents]
 
     def _get_openai_embeddings(self, processed_contents: List[str], empty_indices: List[int]) -> List[List[float]]:
-        """ batch OpenAI embeddings"""
+        """get batch OpenAI embeddings"""
         # Filter out empty contents for API call
         non_empty_contents = [c for c in processed_contents if c]
         
         if not non_empty_contents:
-            # All contents are empty
             dim = self.get_embedding_dimension()
             return [[0.0] * dim for _ in processed_contents]
         
@@ -181,7 +163,7 @@ class EmbeddingManager:
         return embeddings
 
     def _get_local_embeddings(self, processed_contents: List[str], empty_indices: List[int]) -> List[List[float]]:
-        """ batch local embeddings"""
+        """ get batch local embeddings"""
         # Filter out empty contents
         non_empty_contents = [c for c in processed_contents if c]
         
@@ -193,7 +175,6 @@ class EmbeddingManager:
         # Use SentenceTransformers batch encoding
         batch_embeddings = self.model.encode(non_empty_contents)
         
-        # Reconstruct full list with zero embeddings for empty contents
         embeddings = []
         non_empty_idx = 0
         dim = self.get_embedding_dimension()
@@ -209,12 +190,11 @@ class EmbeddingManager:
 
     @classmethod
     def get_manager(cls, model_name: str = DEFAULT_EMBEDDING_MODEL) -> 'EmbeddingManager':
-        """ or create an embedding manager for the specified model."""
+        """get or create an embedding manager for the specified model."""
         return cls(model_name)
 
     @classmethod
     def clear_cache(cls):
-        """ all cached embedding managers."""
         with cls._lock:
             cls._instances.clear()
         logger.info("Cleared embedding manager cache")

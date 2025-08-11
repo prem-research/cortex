@@ -1,6 +1,6 @@
 from typing import List, Dict, Optional, Any, Tuple
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import os
@@ -33,7 +33,6 @@ class AgenticMemorySystem:
                  enable_smart_collections: bool = False,
                  enable_background_processing: bool = True,
                  chroma_uri: str = DEFAULT_CHROMA_URI):  
-        """Initialize memory system."""
         if api_key is None:
             api_key = os.getenv("OPENAI_API_KEY")
         self.enable_smart_collections = enable_smart_collections
@@ -50,7 +49,6 @@ class AgenticMemorySystem:
         
         self.embedding_manager = EmbeddingManager(model_name)
         
-        # Configure background processing
         if enable_background_processing:
             self._ltm_executor = ThreadPoolExecutor(max_workers=DEFAULT_LTM_WORKERS, thread_name_prefix="ltm_processor")
             logger.info("Background processing enabled for LTM operations")
@@ -130,9 +128,7 @@ class AgenticMemorySystem:
                                 '''
         
     def analyze_content(self, content: str) -> Dict:            
-        """Analyze content using LLM to extract semantic metadata."""
         if self.enable_smart_collections:
-            # Get existing category context for consistency
             existing_categories_context = ""
             if hasattr(self, 'collection_manager') and self.collection_manager:
                 existing_categories_context = self.collection_manager.get_existing_categories_context()
@@ -164,7 +160,8 @@ class AgenticMemorySystem:
                 Content: "Implemented React hooks for API state management in the frontend"
                 Category: "projects.app.frontend"
 
-                **{existing_categories_context}**
+                **Existing Categories Context**
+                {existing_categories_context}
 
                 **Category Rules (CRITICAL FOR CONSISTENCY):**
                 - Use 2-4 levels: domain.subdomain.specific  
@@ -175,7 +172,7 @@ class AgenticMemorySystem:
                 - EXTEND THOUGHTFULLY: Add hierarchy levels only when content is significantly different from existing patterns
                 - GROW COLLECTIONS NATURALLY: Let successful categories accumulate related memories rather than fragmenting them
 
-                Format the response as a JSON object:
+                Format the response as a JSON object (all fields required, category must be specific and non-generic):
                 {{
                     "keywords": [
                         // several specific, distinct keywords that capture key concepts and terminology
@@ -199,6 +196,7 @@ class AgenticMemorySystem:
                         // Examples: "work.programming.python", "personal.finance.budgeting", "education.science.physics"
                         // Start with broad domain, then subdomain, then specific area
                         // Use 2-4 levels maximum
+                        // Never use "Uncategorized", "General" or any generic bucket
                 }}
 
                 Content for analysis:
@@ -233,7 +231,7 @@ class AgenticMemorySystem:
                 Content for analysis:
                 """ + content
         try:
-            response = self.llm_controller.llm.get_completion(prompt, response_format={"type": "json_schema", "json_schema": {
+            response_schema = {"type": "json_schema", "json_schema": {
                         "name": "response",
                         "schema": {
                             "type": "object",
@@ -253,9 +251,16 @@ class AgenticMemorySystem:
                                         "type": "string"
                                     }
                                 }
+                            },
+                            "required": ["keywords", "context", "tags"]
                             }
+                    }}
+            if self.enable_smart_collections:
+                response_schema["json_schema"]["schema"]["properties"]["category"] = {
+                    "type": "string"
                         }
-                    }})
+                response_schema["json_schema"]["schema"]["required"].append("category")
+            response = self.llm_controller.llm.get_completion(prompt, response_format=response_schema)
             return json.loads(response)
         except Exception as e:
             logger.error(f"Error analyzing content: {e}")
@@ -263,7 +268,7 @@ class AgenticMemorySystem:
 
     def add_note(self, content: str, time: str = None, user_id: Optional[str] = None, 
                 session_id: Optional[str] = None, **kwargs) -> str:
-        """Add a new memory note: STM immediate, LTM background processing"""
+        """add a new memory note: STM immediate, LTM background processing"""
         if time is not None:
             kwargs['timestamp'] = time
         
@@ -272,7 +277,13 @@ class AgenticMemorySystem:
         if session_id is not None:
             kwargs['session_id'] = session_id
         
-        note = MemoryNote(content=content, **kwargs)
+        allowed_fields = {
+            "id", "keywords", "links", "retrieval_count", "timestamp",
+            "last_accessed", "context", "evolution_history", "category",
+            "tags", "user_id", "session_id"
+        }
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_fields}
+        note = MemoryNote(content=content, **filtered_kwargs)
         self._process_through_tiers(note, user_id, session_id)
         self.memories[note.id] = note
         
@@ -397,7 +408,7 @@ class AgenticMemorySystem:
                user_id: Optional[str] = None,
                session_id: Optional[str] = None,
                temporal_weight: float = 0.0,
-               date_range: Optional[Dict] = None) -> List[Dict]:
+                date_range: Optional[Dict] = None) -> List[Dict]:
         """
         Unified search interface for memories across STM and LTM.
         
@@ -417,15 +428,20 @@ class AgenticMemorySystem:
             List of matching memories with relevance scores
         """
                 # Perform global search (existing logic with relationships, evolution, etc.)
-        global_results = self._global_search(query, limit, memory_source, where_filter,
-                                            apply_postprocessing, context, user_id, session_id, temporal_weight, date_range)
+        # Accept date_range as string (natural language or yyyy-mm) and parse here if needed
+        parsed_date_range = date_range
+        if isinstance(date_range, str):
+            parsed_date_range = self._parse_date_range(date_range)
+        global_results = self._global_search(
+            query, limit, memory_source, where_filter,
+            apply_postprocessing, context, user_id, session_id, temporal_weight, parsed_date_range
+        )
         
         # Enhance with collection-aware search if enabled
         if (self.enable_smart_collections and hasattr(self, 'collection_manager') 
             and self.collection_manager.collections):
             collection_results = self._collection_aware_search(query, limit, memory_source, 
                                                              where_filter, user_id, session_id, context)
-            # Apply postprocessing to collection results too
             if apply_postprocessing and context:
                 collection_results = self.retrieval_processor.process(collection_results, context)
                 
@@ -444,10 +460,9 @@ class AgenticMemorySystem:
         """Global search with relationships and evolution features"""
         results = []
         
-        # Build temporal filter if date range specified
         temporal_filter = self._build_temporal_filter(date_range, where_filter)
         
-        if memory_source in ["stm", "all"]:
+        if memory_source in ["stm", "all"] and not date_range:
             stm_results = self.stm.search(
                 query, 
                 limit, 
@@ -521,36 +536,79 @@ class AgenticMemorySystem:
         return unique_results[:limit]
     
     def _build_temporal_filter(self, date_range: Optional[Dict], base_filter: Optional[Dict] = None) -> Optional[Dict]:
-        """Build ChromaDB where filter for temporal constraints"""
+        """Build vectordb where filter for temporal constraints"""
         if not date_range:
             return base_filter
             
-        # Parse date range constraints  
-        temporal_constraints = {}
-        
+        and_clauses = []
         if "start" in date_range:
-            temporal_constraints["timestamp"] = {"$gte": date_range["start"]}
+            try:
+                start_ts = datetime.fromisoformat(date_range["start"].replace('Z', '+00:00')).timestamp()
+                and_clauses.append({"timestamp_epoch": {"$gte": start_ts}})
+            except Exception:
+                and_clauses.append({"timestamp_epoch": {"$gte": date_range["start"]}})
         if "end" in date_range:
-            if "timestamp" in temporal_constraints:
-                temporal_constraints["timestamp"]["$lte"] = date_range["end"]
-            else:
-                temporal_constraints["timestamp"] = {"$lte": date_range["end"]}
-        
-        # Merge with existing filter
+            try:
+                end_ts = datetime.fromisoformat(date_range["end"].replace('Z', '+00:00')).timestamp()
+                and_clauses.append({"timestamp_epoch": {"$lte": end_ts}})
+            except Exception:
+                and_clauses.append({"timestamp_epoch": {"$lte": date_range["end"]}})
+
         if base_filter:
-            merged_filter = dict(base_filter)
-            if "timestamp" in merged_filter:
-                # Merge timestamp constraints
-                if isinstance(merged_filter["timestamp"], dict) and isinstance(temporal_constraints["timestamp"], dict):
-                    merged_filter["timestamp"].update(temporal_constraints["timestamp"])
-                else:
-                    # Handle non-dict timestamp filters
-                    merged_filter["timestamp"] = temporal_constraints["timestamp"]
+            if "$and" in base_filter and isinstance(base_filter["$and"], list):
+                merged = {"$and": base_filter["$and"] + and_clauses}
             else:
-                merged_filter.update(temporal_constraints)
-            return merged_filter
+                merged = {"$and": and_clauses + [base_filter]}
+            return merged
         else:
-            return temporal_constraints
+            if len(and_clauses) == 1:
+                return and_clauses[0]
+            return {"$and": and_clauses}
+
+    def _parse_date_range(self, date_str: str) -> Optional[Dict[str, str]]:
+        """Lightweight natural language/RFC3339 date range parser for core API."""
+        import re
+        if not date_str:
+            return None
+        s_original = date_str.strip()
+        s_lower = date_str.lower().strip()
+        now = datetime.now().astimezone()
+
+        # RFC3339 single timestamp passthrough
+        if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', s_original):
+            return {"start": s_original, "end": s_original}
+
+        if "yesterday" in s_lower:
+            start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1) - timedelta(microseconds=1)
+            return {"start": start.isoformat(), "end": end.isoformat()}
+
+        if "last week" in s_lower:
+            # Last 7 full days excluding today
+            end = (now - timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            start = (end - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+            return {"start": start.isoformat(), "end": end.isoformat()}
+
+        if "last month" in s_lower:
+            # Last 30 full days excluding today
+            end = (now - timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=999999)
+            start = (end - timedelta(days=29)).replace(hour=0, minute=0, second=0, microsecond=0)
+            return {"start": start.isoformat(), "end": end.isoformat()}
+
+        if re.match(r'^\d{4}-\d{2}$', s_lower):
+            year, month = s_lower.split('-')
+            start = datetime(int(year), int(month), 1).astimezone()
+            next_month = start + timedelta(days=32)
+            end = next_month.replace(day=1) - timedelta(microseconds=1)
+            return {"start": start.isoformat(), "end": end.isoformat()}
+
+        if re.match(r'^\d{4}$', s_lower):
+            start = datetime(int(s_lower), 1, 1).astimezone()
+            end = datetime(int(s_lower), 12, 31, 23, 59, 59, 999999).astimezone()
+            return {"start": start.isoformat(), "end": end.isoformat()}
+
+        logger.warning(f"Could not parse date range: {date_str}")
+        return None
     
     def _apply_temporal_weighting(self, results: List[Dict], temporal_weight: float) -> List[Dict]:
         """Apply temporal weighting to search results"""
@@ -560,15 +618,12 @@ class AgenticMemorySystem:
         current_time = time.time()
         
         for result in results:
-            semantic_score = result.get("score", 0.0)
-            
-            # Parse timestamp and calculate recency score
+            semantic_score = result.get("score", 0.0)            
             recency_score = 0.0
             timestamp = result.get("timestamp")
             
             if timestamp:
                 try:
-                    # Parse RFC3339 timestamp format
                     if isinstance(timestamp, str):
                         # Try to parse as RFC3339 (ISO 8601)
                         parsed_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
@@ -584,7 +639,7 @@ class AgenticMemorySystem:
                     # Fallback: if timestamp can't be parsed, assume medium recency
                     recency_score = 0.5
             
-            # Combine semantic and temporal scores
+            # Combine semantic and temporal scores = form a composite score to rank results
             combined_score = (semantic_score * (1 - temporal_weight) + 
                             recency_score * temporal_weight)
             
@@ -718,7 +773,6 @@ class AgenticMemorySystem:
                         "score": score
                     }
         
-        # Extract unique results
         unique_results = [item["result"] for item in seen_ids.values()]
         
         # Apply temporal weighting if requested (affects both global and collection results)
@@ -741,7 +795,6 @@ class AgenticMemorySystem:
                      session_id: Optional[str] = None,
                      temporal_weight: float = 0.0,
                      date_range: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        """Alias for search() - main search interface"""
         return self.search(query=query, limit=limit, memory_source=memory_source,
                          where_filter=where_filter, apply_postprocessing=apply_postprocessing,
                          context=context, user_id=user_id, session_id=session_id,
@@ -749,12 +802,10 @@ class AgenticMemorySystem:
     
     def search_agentic(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT, user_id: Optional[str] = None, 
                       session_id: Optional[str] = None) -> List[Dict]:
-        """Backward compatibility wrapper for search()"""
         return self.search(query=query, limit=limit, user_id=user_id, session_id=session_id)
     
     def search_filtered(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT, where_filter: Optional[Dict] = None,
                        user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict]:
-        """Backward compatibility wrapper for search() with filters"""
         return self.search(query=query, limit=limit, where_filter=where_filter, user_id=user_id, session_id=session_id)
     
     def clear_stm(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
@@ -766,9 +817,8 @@ class AgenticMemorySystem:
         self.ltm.clear(user_id, session_id)
     
 
-    
     def find_related_memories(self, query: str, k: int = DEFAULT_RELATED_MEMORIES_COUNT, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Tuple[str, List[str]]:
-        """Find related memories using ChromaDB retrieval"""
+        """Find related memories using vectorDB retrieval"""
         if not self.memories:
             return "", []
             
@@ -862,7 +912,6 @@ class AgenticMemorySystem:
         """Generate embeddings for text content using shared embedding manager"""
         return self.embedding_manager.get_embedding(content)
     
-
 
     def process_memory(self, note: MemoryNote) -> Tuple[bool, MemoryNote]:
         """Process a memory note and determine if it should evolve."""
@@ -1267,8 +1316,6 @@ class AgenticMemorySystem:
                             return datetime.strptime(ts, fmt)
                         except ValueError:
                             continue
-                    
-                    logger.warning(f"Could not parse timestamp: {ts}")
                 
                 logger.warning(f"Could not parse timestamp: {ts}")
                 return datetime(2000, 1, 1)
@@ -1359,14 +1406,12 @@ class AgenticMemorySystem:
                         "session_id": session_id
                     }
                     
-                    # Update in the correct collection
                     self.ltm._get_collection(user_id, session_id).add_document(
                         document=linked_note.content, 
                         metadata=metadata, 
                         doc_id=link_id
                     )
                     
-                    # Also update in STM if present
                     self.stm.add(
                         link_id, 
                         linked_note.content, 
@@ -1375,7 +1420,6 @@ class AgenticMemorySystem:
                         session_id
                     )
                     
-                    # Update in memory dictionary
                     self.memories[link_id] = linked_note
 
     def _is_valid_uuid(self, val: str) -> bool:
@@ -1391,6 +1435,7 @@ class AgenticMemorySystem:
 
     def _get_reciprocal_relationship(self, relationship_type: str) -> str:
         """Get the reciprocal relationship type."""
+        # TODO: add/reduce relationship types (hardcoded for now)
         reciprocals = {
             'supports': 'supported_by',
             'supported_by': 'supports',

@@ -14,7 +14,6 @@ class ChromaRetriever:
     """Vector database retrieval using ChromaDB"""
     def __init__(self, collection_name: str = "memories", embedding_model: str = DEFAULT_EMBEDDING_MODEL, 
                  chroma_uri: str = DEFAULT_CHROMA_URI):
-        """Initialize ChromaDB retriever with persistent server connection."""
         self.collection_name = collection_name
         self.embedding_model_name = embedding_model
         self.chroma_uri = chroma_uri
@@ -60,10 +59,21 @@ class ChromaRetriever:
             logger.debug(f"Skipping add for unchanged document: {doc_id}")
             return
         processed_metadata = {}
+        # Derive a numeric timestamp for efficient range queries, store as timestamp_epoch
+        if 'timestamp' in metadata and metadata.get('timestamp'):
+            try:
+                from datetime import datetime
+                ts = str(metadata['timestamp']).replace('Z', '+00:00')
+                processed_metadata['timestamp_epoch'] = datetime.fromisoformat(ts).timestamp()
+            except Exception:
+                pass
+        processed_metadata["doc_id"] = doc_id
         for key, value in metadata.items():
             if value is None:
                 continue
-                
+            if isinstance(value, (int, float, bool)):
+                processed_metadata[key] = value
+                continue
             if key == 'links' and isinstance(value, dict):
                 processed_metadata[key] = json.dumps(value)
             elif isinstance(value, list):
@@ -110,24 +120,40 @@ class ChromaRetriever:
             return None
             
         try:
-            results = self.collection.get(
-                ids=[doc_id],
-                include=['documents', 'metadatas']
-            )
-            
-            if results and results.get('ids') and len(results['ids']) > 0:
-                metadata = results['metadatas'][0] if results.get('metadatas') else {}
-                document = results['documents'][0] if results.get('documents') else ""
-                
-                return {
-                    'id': doc_id,
-                    'metadata': metadata,
-                    'document': document,
-                    'distance': 0.0
-                }
+            results = self.collection.get(where={"doc_id": {"$eq": doc_id}}, include=['documents', 'metadatas'])
+            if results and results.get('metadatas'):
+                metas = results.get('metadatas') or []
+                docs = results.get('documents') or []
+                if metas:
+                    metadata = metas[0]
+                    document = docs[0] if docs else ""
+                    return {
+                        'id': doc_id,
+                        'metadata': metadata,
+                        'document': document,
+                        'distance': 0.0
+                    }
+            # fallback to direct ID lookup
+            try:
+                results = self.collection.get(ids=[doc_id], include=['documents', 'metadatas'])
+                if results and results.get('ids'):
+                    ids = results.get('ids') or []
+                    docs = results.get('documents') or []
+                    metas = results.get('metadatas') or []
+                    if ids:
+                        metadata = metas[0] if metas else {}
+                        document = docs[0] if docs else ""
+                        return {
+                            'id': doc_id,
+                            'metadata': metadata,
+                            'document': document,
+                            'distance': 0.0
+                        }
+            except Exception as inner:
+                logger.debug(f"Chroma get(ids=...) failed for {doc_id} in '{self.collection_name}': {inner}")
                 
         except Exception as e:
-            logger.error(f"Error getting document {doc_id} from '{self.collection_name}': {e}")
+            logger.debug(f"Error getting document {doc_id} from '{self.collection_name}': {e}")
             
         return None
     
@@ -170,15 +196,17 @@ class ChromaRetriever:
             if not query and where_filter:
                 results = self.collection.get(
                     where=where_filter,
-                    limit=k,
                     include=['metadatas', 'documents']
                 )
                 if results and results.get('ids'):
+                    ids = results.get('ids', [])[:k]
+                    metadatas = results.get('metadatas', [])[:k] if results.get('metadatas') else []
+                    documents = results.get('documents', [])[:k] if results.get('documents') else []
                     results = {
-                        'ids': [results['ids']],
-                        'metadatas': [results['metadatas']] if results.get('metadatas') else [[]],
-                        'documents': [results['documents']] if results.get('documents') else [[]],
-                        'distances': [[0.0] * len(results['ids'])]
+                        'ids': [ids],
+                        'metadatas': [metadatas],
+                        'documents': [documents],
+                        'distances': [[0.0] * len(ids)]
                     }
                 else:
                     results = {'ids': [[]], 'metadatas': [[]], 'documents': [[]], 'distances': [[]]}

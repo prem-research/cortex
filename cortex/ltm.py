@@ -2,6 +2,7 @@ from typing import List, Dict, Optional, Any
 import threading
 import json
 import logging
+from datetime import datetime
 from cortex.stm import MemoryTier
 from cortex.retrieval.retrievers import ChromaRetriever
 from cortex.constants import DEFAULT_EMBEDDING_MODEL, DEFAULT_CHROMA_URI
@@ -9,7 +10,6 @@ from cortex.constants import DEFAULT_EMBEDDING_MODEL, DEFAULT_CHROMA_URI
 logger = logging.getLogger(__name__)
 
 class LongTermMemory(MemoryTier):
-    """Persistent long-term memory using ChromaDB with enhanced metadata"""
     
     def __init__(self, embedding_model: str = DEFAULT_EMBEDDING_MODEL, chroma_uri: str = DEFAULT_CHROMA_URI):
         super().__init__("long_term_memory")
@@ -19,7 +19,6 @@ class LongTermMemory(MemoryTier):
         self.lock = threading.RLock()
     
     def _get_collection_name(self, user_id: Optional[str], session_id: Optional[str]) -> str:
-        """ a unique collection name for a user/session combination"""
         base = "memories"
         if user_id and session_id:
             return f"{base}_{user_id}_{session_id}"
@@ -30,7 +29,7 @@ class LongTermMemory(MemoryTier):
         return base
     
     def _get_collection(self, user_id: Optional[str], session_id: Optional[str]):
-        """ or create a ChromaDB collection for a user/session"""
+        """get or create a collection for a user/session"""
         
         collection_name = self._get_collection_name(user_id, session_id)
         
@@ -46,7 +45,7 @@ class LongTermMemory(MemoryTier):
             return self.collections[collection_name]
     
     def add(self, memory_id: str, content: str, metadata: Dict[str, Any], user_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
-        """ a memory to long-term storage"""
+        """ add memory to long-term storage"""
         collection = self._get_collection(user_id, session_id)
         
         if user_id is not None and "user_id" not in metadata:
@@ -58,11 +57,10 @@ class LongTermMemory(MemoryTier):
         return memory_id
     
     def get(self, memory_id: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Optional[Dict]:
-        """ a memory by ID using direct ChromaDB retrieval (not search)"""
+        """ get a memory by ID using direct retrieval (not search)"""
         collection = self._get_collection(user_id, session_id)
         
         try:
-            # Use ChromaDB's direct get method for ID retrieval
             result = collection.get_document(memory_id)
             
             if result:
@@ -72,9 +70,7 @@ class LongTermMemory(MemoryTier):
                     **{k: v for k, v in result.get("metadata", {}).items() if k != "id"}
                 }
             
-            # If not found and we have user/session filters, try fallback collections
             if user_id is not None or session_id is not None:
-                # Try default collection as fallback
                 default_collection = self._get_collection(None, None)
                 if default_collection != collection:
                     result = default_collection.get_document(memory_id)
@@ -91,7 +87,7 @@ class LongTermMemory(MemoryTier):
         return None
     
     def search(self, query: str, limit: int, where_filter: Optional[Dict] = None, user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict]:
-        """ memories in long-term storage"""
+        """ searchmemories in long-term storage"""
         collection = self._get_collection(user_id, session_id)
         
         try:
@@ -110,27 +106,31 @@ class LongTermMemory(MemoryTier):
             
             results = collection.search(query, k=limit, where_filter=chroma_where)
             
-            # If no results and we have a user_id but no session_id, try searching across all collections for this user
             if user_id is not None and session_id is None and (not results or len(results) == 0):
                 logger.info(f"No results found in default collection for user {user_id}, searching across all collections")
                 all_results = []
                 
-                # Get all collection names that could contain this user's data
                 user_collections = [name for name in self.collections.keys() if user_id in name]
                 
                 for coll_name in user_collections:
                     try:
                         coll = self.collections[coll_name]
+                        combined_filter = {"user_id": {"$eq": user_id}}
+                        if where_filter:
+                            if isinstance(where_filter, dict) and "$and" in where_filter and isinstance(where_filter["$and"], list):
+                                combined_filter = {"$and": where_filter["$and"] + [{"user_id": {"$eq": user_id}}]}
+                            else:
+                                combined_filter = {"$and": [where_filter, {"user_id": {"$eq": user_id}}]}
+
                         user_results = coll.search(
-                            query, 
-                            k=limit, 
-                            where_filter={"user_id": {"$eq": user_id}}
+                            query,
+                            k=limit,
+                            where_filter=combined_filter,
                         )
                         all_results.extend(user_results)
                     except Exception as e:
                         logger.error(f"Error searching collection {coll_name}: {e}")
                 
-                # Sort by relevance (distance)
                 all_results.sort(key=lambda x: x.get("distance", 1.0))
                 results = all_results[:limit]
             
@@ -150,7 +150,6 @@ class LongTermMemory(MemoryTier):
                     "score": similarity_score,
                 }
                 
-                # Process metadata separately to handle special fields
                 metadata = result.get("metadata", {})
                 for key, value in metadata.items():
                     # Handle links specially - ensure they're converted from string to dict
@@ -171,11 +170,10 @@ class LongTermMemory(MemoryTier):
             return []
     
     def delete(self, memory_id: str, user_id: Optional[str] = None, session_id: Optional[str] = None) -> bool:
-        """ a memory from long-term storage"""
+        """ delete a memory from long-term storage"""
         collection = self._get_collection(user_id, session_id)
         
         try:
-            # Try to find the memory first to make sure we're deleting from the right collection
             result = self.get(memory_id, user_id, session_id)
             if result:
                 collection.delete_document(memory_id)
@@ -186,7 +184,7 @@ class LongTermMemory(MemoryTier):
             return False
     
     def clear(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
-        """ memories for a specific user/session or all if none specified"""
+        """ clear memories for a specific user/session or all if none specified"""
         try:
             collection_name = self._get_collection_name(user_id, session_id)
             with self.lock:
