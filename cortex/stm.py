@@ -147,7 +147,7 @@ class ShortTermMemory(MemoryTier):
             return results[:limit]
     
     def clear(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
-        """ memories for a specific user/session or all if none specified"""
+        """ clear memories for a specific user/session or all if none specified"""
         if user_id is None and session_id is None:
             with self.lock:
                 self.user_memories.clear()

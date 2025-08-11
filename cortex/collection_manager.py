@@ -1,5 +1,3 @@
-"""Collection management for smart memory organization."""
-
 import json
 import logging
 from datetime import datetime
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 class CollectionManager:
     """Manages smart collections for domain-specific memory organization
     
-    Design Note: In our implementation, collection_name IS the category_pattern.
+    Design Note: collection_name IS the category_pattern.
     A collection named 'work.programming' contains all memories with categories 
     that start with 'work.programming' (e.g., 'work.programming.python').
     """

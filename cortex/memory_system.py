@@ -33,7 +33,6 @@ class AgenticMemorySystem:
                  enable_smart_collections: bool = False,
                  enable_background_processing: bool = True,
                  chroma_uri: str = DEFAULT_CHROMA_URI):  
-        """Initialize memory system."""
         if api_key is None:
             api_key = os.getenv("OPENAI_API_KEY")
         self.enable_smart_collections = enable_smart_collections
@@ -50,7 +49,6 @@ class AgenticMemorySystem:
         
         self.embedding_manager = EmbeddingManager(model_name)
         
-        # Configure background processing
         if enable_background_processing:
             self._ltm_executor = ThreadPoolExecutor(max_workers=DEFAULT_LTM_WORKERS, thread_name_prefix="ltm_processor")
             logger.info("Background processing enabled for LTM operations")
@@ -130,9 +128,7 @@ class AgenticMemorySystem:
                                 '''
         
     def analyze_content(self, content: str) -> Dict:            
-        """Analyze content using LLM to extract semantic metadata."""
         if self.enable_smart_collections:
-            # Get existing category context for consistency
             existing_categories_context = ""
             if hasattr(self, 'collection_manager') and self.collection_manager:
                 existing_categories_context = self.collection_manager.get_existing_categories_context()
@@ -272,7 +268,7 @@ class AgenticMemorySystem:
 
     def add_note(self, content: str, time: str = None, user_id: Optional[str] = None, 
                 session_id: Optional[str] = None, **kwargs) -> str:
-        """Add a new memory note: STM immediate, LTM background processing"""
+        """add a new memory note: STM immediate, LTM background processing"""
         if time is not None:
             kwargs['timestamp'] = time
         
@@ -281,7 +277,6 @@ class AgenticMemorySystem:
         if session_id is not None:
             kwargs['session_id'] = session_id
         
-        # Filter unexpected kwargs for MemoryNote constructor
         allowed_fields = {
             "id", "keywords", "links", "retrieval_count", "timestamp",
             "last_accessed", "context", "evolution_history", "category",
@@ -447,7 +442,6 @@ class AgenticMemorySystem:
             and self.collection_manager.collections):
             collection_results = self._collection_aware_search(query, limit, memory_source, 
                                                              where_filter, user_id, session_id, context)
-            # Apply postprocessing to collection results too
             if apply_postprocessing and context:
                 collection_results = self.retrieval_processor.process(collection_results, context)
                 
@@ -466,10 +460,8 @@ class AgenticMemorySystem:
         """Global search with relationships and evolution features"""
         results = []
         
-        # Build temporal filter if date range specified
         temporal_filter = self._build_temporal_filter(date_range, where_filter)
         
-        # since STM doesn't support range filters
         if memory_source in ["stm", "all"] and not date_range:
             stm_results = self.stm.search(
                 query, 
@@ -544,11 +536,10 @@ class AgenticMemorySystem:
         return unique_results[:limit]
     
     def _build_temporal_filter(self, date_range: Optional[Dict], base_filter: Optional[Dict] = None) -> Optional[Dict]:
-        """Build ChromaDB where filter for temporal constraints"""
+        """Build vectordb where filter for temporal constraints"""
         if not date_range:
             return base_filter
             
-        # Build constraints using $and to satisfy ChromaDB operator rules
         and_clauses = []
         if "start" in date_range:
             try:
@@ -564,7 +555,6 @@ class AgenticMemorySystem:
                 and_clauses.append({"timestamp_epoch": {"$lte": date_range["end"]}})
 
         if base_filter:
-            # If base_filter already has $and, merge into it; otherwise create a new $and
             if "$and" in base_filter and isinstance(base_filter["$and"], list):
                 merged = {"$and": base_filter["$and"] + and_clauses}
             else:
@@ -628,15 +618,12 @@ class AgenticMemorySystem:
         current_time = time.time()
         
         for result in results:
-            semantic_score = result.get("score", 0.0)
-            
-            # Parse timestamp and calculate recency score
+            semantic_score = result.get("score", 0.0)            
             recency_score = 0.0
             timestamp = result.get("timestamp")
             
             if timestamp:
                 try:
-                    # Parse RFC3339 timestamp format
                     if isinstance(timestamp, str):
                         # Try to parse as RFC3339 (ISO 8601)
                         parsed_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
@@ -652,7 +639,7 @@ class AgenticMemorySystem:
                     # Fallback: if timestamp can't be parsed, assume medium recency
                     recency_score = 0.5
             
-            # Combine semantic and temporal scores
+            # Combine semantic and temporal scores = form a composite score to rank results
             combined_score = (semantic_score * (1 - temporal_weight) + 
                             recency_score * temporal_weight)
             
@@ -786,7 +773,6 @@ class AgenticMemorySystem:
                         "score": score
                     }
         
-        # Extract unique results
         unique_results = [item["result"] for item in seen_ids.values()]
         
         # Apply temporal weighting if requested (affects both global and collection results)
@@ -809,7 +795,6 @@ class AgenticMemorySystem:
                      session_id: Optional[str] = None,
                      temporal_weight: float = 0.0,
                      date_range: Optional[Dict] = None) -> List[Dict[str, Any]]:
-        """Alias for search() - main search interface"""
         return self.search(query=query, limit=limit, memory_source=memory_source,
                          where_filter=where_filter, apply_postprocessing=apply_postprocessing,
                          context=context, user_id=user_id, session_id=session_id,
@@ -817,12 +802,10 @@ class AgenticMemorySystem:
     
     def search_agentic(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT, user_id: Optional[str] = None, 
                       session_id: Optional[str] = None) -> List[Dict]:
-        """Backward compatibility wrapper for search()"""
         return self.search(query=query, limit=limit, user_id=user_id, session_id=session_id)
     
     def search_filtered(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT, where_filter: Optional[Dict] = None,
                        user_id: Optional[str] = None, session_id: Optional[str] = None) -> List[Dict]:
-        """Backward compatibility wrapper for search() with filters"""
         return self.search(query=query, limit=limit, where_filter=where_filter, user_id=user_id, session_id=session_id)
     
     def clear_stm(self, user_id: Optional[str] = None, session_id: Optional[str] = None):
@@ -834,9 +817,8 @@ class AgenticMemorySystem:
         self.ltm.clear(user_id, session_id)
     
 
-    
     def find_related_memories(self, query: str, k: int = DEFAULT_RELATED_MEMORIES_COUNT, user_id: Optional[str] = None, session_id: Optional[str] = None) -> Tuple[str, List[str]]:
-        """Find related memories using ChromaDB retrieval"""
+        """Find related memories using vectorDB retrieval"""
         if not self.memories:
             return "", []
             
@@ -930,7 +912,6 @@ class AgenticMemorySystem:
         """Generate embeddings for text content using shared embedding manager"""
         return self.embedding_manager.get_embedding(content)
     
-
 
     def process_memory(self, note: MemoryNote) -> Tuple[bool, MemoryNote]:
         """Process a memory note and determine if it should evolve."""
@@ -1425,14 +1406,12 @@ class AgenticMemorySystem:
                         "session_id": session_id
                     }
                     
-                    # Update in the correct collection
                     self.ltm._get_collection(user_id, session_id).add_document(
                         document=linked_note.content, 
                         metadata=metadata, 
                         doc_id=link_id
                     )
                     
-                    # Also update in STM if present
                     self.stm.add(
                         link_id, 
                         linked_note.content, 
@@ -1441,7 +1420,6 @@ class AgenticMemorySystem:
                         session_id
                     )
                     
-                    # Update in memory dictionary
                     self.memories[link_id] = linked_note
 
     def _is_valid_uuid(self, val: str) -> bool:
@@ -1457,6 +1435,7 @@ class AgenticMemorySystem:
 
     def _get_reciprocal_relationship(self, relationship_type: str) -> str:
         """Get the reciprocal relationship type."""
+        # TODO: add/reduce relationship types (hardcoded for now)
         reciprocals = {
             'supports': 'supported_by',
             'supported_by': 'supports',

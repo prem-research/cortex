@@ -14,7 +14,6 @@ class ChromaRetriever:
     """Vector database retrieval using ChromaDB"""
     def __init__(self, collection_name: str = "memories", embedding_model: str = DEFAULT_EMBEDDING_MODEL, 
                  chroma_uri: str = DEFAULT_CHROMA_URI):
-        """Initialize ChromaDB retriever with persistent server connection."""
         self.collection_name = collection_name
         self.embedding_model_name = embedding_model
         self.chroma_uri = chroma_uri
@@ -72,7 +71,6 @@ class ChromaRetriever:
         for key, value in metadata.items():
             if value is None:
                 continue
-            # Preserve numeric/boolean types for range/equality filters
             if isinstance(value, (int, float, bool)):
                 processed_metadata[key] = value
                 continue
@@ -122,7 +120,6 @@ class ChromaRetriever:
             return None
             
         try:
-            # First try metadata-based lookup using stored doc_id to avoid server get/id bugs
             results = self.collection.get(where={"doc_id": {"$eq": doc_id}}, include=['documents', 'metadatas'])
             if results and results.get('metadatas'):
                 metas = results.get('metadatas') or []
@@ -202,7 +199,6 @@ class ChromaRetriever:
                     include=['metadatas', 'documents']
                 )
                 if results and results.get('ids'):
-                    # Respect k by truncating
                     ids = results.get('ids', [])[:k]
                     metadatas = results.get('metadatas', [])[:k] if results.get('metadatas') else []
                     documents = results.get('documents', [])[:k] if results.get('documents') else []

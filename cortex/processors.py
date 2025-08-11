@@ -16,7 +16,6 @@ class LightPreprocessor:
         self.memory_system = memory_system
     
     def process(self, content: str, metadata: Optional[Dict] = None) -> Dict[str, Any]:
-        """extract basic metadata for STM"""
         result = metadata.copy() if metadata else {}
         
         embedding = self.memory_system.embedding_manager.get_embedding(content)

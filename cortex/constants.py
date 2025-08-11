@@ -1,6 +1,3 @@
-"""
-Configuration constants for the Cortex memory system.
-"""
 
 # Processing constants
 MAX_KEYWORDS = 5
@@ -20,7 +17,6 @@ DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small'  # OpenAI by default
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
 DEFAULT_LLM_BACKEND = "openai"
 
-# Embedding model configurations
 OPENAI_EMBEDDING_MODELS = {
     'text-embedding-3-small': 1536,
     'text-embedding-3-large': 3072,
