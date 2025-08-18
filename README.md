@@ -70,7 +70,7 @@ docker run -p 8000:8000 chromadb/chroma:latest
 **Prerequisites**:
 Start ChromaDB server first: 
 ```bash
-poetry run chroma run --host localhost --port 8000
+poetry run chroma run --host localhost --port 8003
 ```
 
 ```python
@@ -79,7 +79,10 @@ from dotenv import load_dotenv
 load_dotenv(".env")
 
 # Initialize with your OpenAI key
-memory = AgenticMemorySystem(api_key=os.getenv("OPENAI_API_KEY"))
+memory = AgenticMemorySystem(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    enable_smart_collections=False,
+)
 
 # Store memories (auto-analyzes content for keywords, context, tags)
 memory.add_note("User prefers morning meetings and uses VS Code")
@@ -256,6 +259,8 @@ results = memory_system.search_memory(
 ```
 
 #### 3. Context-aware Retrieval
+> Note: In most cases this will be helpful and recommended to use, as we always have some kind of context (or make some kind of context available pre-retrieval) based on the downstream task for which we are using Cortex.
+> For a simple multi-turn chat usecase it can be summary of recent conversation window, or `F(recent turns summary, current turn)`.
 
 ```python
 # Search with context for better relevance
@@ -273,7 +278,7 @@ filtered_results = memory_system.search_memory(
 ```
 
 
-### LangChain Tool Demo (Add + Search)
+### Example: LangChain Tool Demo (Add + Search)
 
 ```python
 import os
@@ -283,7 +288,6 @@ from pydantic import BaseModel, Field
 from langchain.tools import StructuredTool
 from cortex.memory_system import AgenticMemorySystem
 
-# Initialize Cortex (enables smart collections if OPENAI_API_KEY is set)
 api_key = os.getenv("OPENAI_API_KEY")
 memory = AgenticMemorySystem(
     api_key=api_key,
@@ -380,13 +384,13 @@ Cortex includes a command-line interface for processing text files and managing 
 
 ```bash
 # Process a text file and store memories
-python -m cortex.main --input-file data/knowledge.txt
+poetry run python -m cortex.main --input-file data/knowledge.txt
 
 # Query existing memories
-python -m cortex.main --query "What is machine learning?" --limit 5
+poetry run python -m cortex.main --query "What is machine learning?" --limit 5
 
 # Load pre-stored local memories from json files
-python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
+poetry run python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
 
 ```
 
@@ -656,7 +660,7 @@ flowchart TD
 
 ### When to Enable Smart Collections
 
-** Enable when you have:**
+**Enable when you have:**
 - **Mixed domains**: Work + personal + hobbies creating category fragmentation
 - **500+ memories**: Scale where flat search returns too many irrelevant matches  
 - **Repeated patterns**: Similar content that should group together (Django, Python, meetings, etc.)
@@ -678,7 +682,7 @@ With Smart Collections:
 → Enhanced work queries, filtered personal results
 ```
 
-** Skip for:**
+**Skip for:**
 - **Single domain**: Only work OR only personal (no cross-domain confusion)
 - **Small scale**: < 200 memories (global search works fine)  
 - **Specialized use**: Focused topics like "only research papers" or "only meeting notes"
@@ -739,10 +743,10 @@ results = memory_system.search_memory(
 ```
 
 **Supported Date Formats:**
+- RFC3339 (preferred): `"2023-01-01T09:00:00+00:00"` (ISO 8601/RFC3339)
 - Natural: `"yesterday"`, `"last week"`, `"last month"`
 - Year-Month: `"2023-03"` (March 2023)
 - Year: `"2023"` (entire year)
-- RFC3339: `"2023-01-01T09:00:00+00:00"` (ISO 8601/RFC3339)
 
 **Performance Benefits:**
 - **Database filtering**: No expensive candidate expansion (3x faster)
@@ -805,7 +809,7 @@ personal_assistant = AgenticMemorySystem(
 # Enterprise Knowledge Base
 enterprise_system = AgenticMemorySystem(
     stm_capacity=200,
-    model_name="text-embedding-ada-002",
+    model_name="text-embedding-3-small",
     enable_smart_collections=True  # Multiple teams/projects
 )
 
