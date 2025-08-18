@@ -40,7 +40,7 @@ A memory system for AI agents that stores, retrieves, and evolves information ov
 **Requirements**: Python 3.11+, [Poetry (for dependency management)](https://python-poetry.org/docs/#installation), 4GB+ RAM, OpenAI API key (or Ollama uri for self-hosted)
 
 ```bash
-git clone https://github.com/biswaroop1547/cortex.git
+git clone https://github.com/prem-research/cortex.git
 cd cortex
 poetry install
 
