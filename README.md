@@ -54,10 +54,10 @@ Cortex requires a persistent ChromaDB server for vector storage. Start it locall
 
 ```bash
 # Install ChromaDB (if not already installed)
-pip install chromadb
+poetry add chromadb
 
 # Start ChromaDB server locally
-chroma run --host localhost --port 8003
+poetry run chroma run --host localhost --port 8003
 
 # Or using Docker
 docker run -p 8000:8000 chromadb/chroma:latest
@@ -70,14 +70,16 @@ docker run -p 8000:8000 chromadb/chroma:latest
 **Prerequisites**:
 Start ChromaDB server first: 
 ```bash
-chroma run --host localhost --port 8000
+poetry run chroma run --host localhost --port 8000
 ```
 
 ```python
 from cortex.memory_system import AgenticMemorySystem
+from dotenv import load_dotenv
+load_dotenv(".env")
 
 # Initialize with your OpenAI key
-memory = AgenticMemorySystem(api_key="your-openai-key")
+memory = AgenticMemorySystem(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Store memories (auto-analyzes content for keywords, context, tags)
 memory.add_note("User prefers morning meetings and uses VS Code")
@@ -88,7 +90,7 @@ print(results[0]['content'])  # "User prefers morning meetings and uses VS Code"
 
 # Enable Smart Collections for mixed domains (work + personal + hobbies)
 smart_memory = AgenticMemorySystem(
-    api_key="your-openai-key",
+    api_key=os.getenv("OPENAI_API_KEY"),
     enable_smart_collections=True  # Prevents category fragmentation at scale
 )
 ```
@@ -96,72 +98,124 @@ smart_memory = AgenticMemorySystem(
 ## Usage Examples
 
 ```python
-from cortex.memory_system import AgenticMemorySystem
 import os
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from cortex.memory_system import AgenticMemorySystem
 
 # Load environment variables
-load_dotenv()
+load_dotenv(".env")
 
 try:
     # Initialize the memory system
     memory_system = AgenticMemorySystem(
-        model_name='all-MiniLM-L6-v2',  # Embedding model
+        #model_name='all-MiniLM-L6-v2',  # Embedding model
+        model_name='text-embedding-3-small',  # Embedding model
         llm_backend="openai",           # LLM provider
-        llm_model="gpt-4o-mini",        # LLM model
-        stm_capacity=100,               # STM capacity
+        #llm_model="gpt-4o-mini",        # LLM model
+        enable_smart_collections=True,      # Knob 1: Domain organization
+    enable_background_processing=True,  # Knob 2: Async vs sync
+        stm_capacity=10,               # STM capacity
         api_key=os.getenv("OPENAI_API_KEY")
     )
 
-    # Store a memory
-    memory_id = memory_system.add_note(
-        content="The user prefers morning meetings and uses VS Code for development.",
-        context="User Preferences",
-        tags=["scheduling", "tools"]
-    )
-    print(f"Stored memory with ID: {memory_id}")
-
-    # Search for relevant memories
-    results = memory_system.search_memory(
-        query="What editor does the user prefer?",
-        limit=5
+    # Stores memories with timestamps
+    # Recent memory (1 hour ago)
+    memory_system.add_note(
+        "User prefers TypeScript over JavaScript for new projects",
+        user_id="user_123",
+        time=(datetime.now() - timedelta(hours=1)).astimezone().isoformat()
     )
 
-    # Temporal-aware search (auto-detects "last", "recent", "latest" keywords)
-    recent_results = memory_system.search_memory(
-        query="what did I last discuss with the team?",
-        limit=5  # Automatically applies temporal_weight=0.7 for recency
-    )
-    
-    # Date range filtering
-    date_filtered = memory_system.search_memory(
-        query="team meetings", 
-        limit=5,
-        date_range="last week"  # Database-level temporal filtering
-    )
-    
-    # Manual temporal weighting (0.0=semantic only, 1.0=recency only)
-    custom_temporal = memory_system.search_memory(
-        query="project updates",
-        limit=5,
-        temporal_weight=0.3  # Blend: 70% semantic + 30% recency
+    # Yesterday's memory
+    memory_system.add_note(
+        "Discussed API rate limiting strategies using Redis",
+        user_id="user_123",
+        time=(datetime.now() - timedelta(days=1)).astimezone().isoformat()
     )
 
+    # Last week's memory
+    memory_system.add_note(
+        "Team decided to migrate from REST to GraphQL",
+        user_id="user_123",
+        time=(datetime.now() - timedelta(days=7)).astimezone().isoformat()
+    )
+
+    # Specific date memory (January 2024)
+    memory_system.add_note(
+        "Q1 planning: Focus on performance optimization",
+        user_id="user_123",
+        time="2024-01-15T10:00:00+00:00"
+    )
+
+    # Retrieves with different strategies
+    # Strategy 1: Pure semantic search
+    results_1 = memory_system.search(
+        "programming preferences",
+        user_id="user_123",
+        memory_source="ltm",
+        limit=3,
+    )
+    # Returns: TypeScript preference (most semantically relevant)
+
+    # Strategy 2: Temporal-aware search
+    results_2 = memory_system.search(
+        "what did we discuss yesterday?",
+        user_id="user_123",
+        memory_source="ltm",
+        temporal_weight=0.7,  # 70% recency, 30% semantic
+        limit=3,
+    )
+    # Returns: Redis rate limiting (from yesterday)
+
+    # Strategy 3: Date-filtered search
+    results_3 = memory_system.search(
+        "team decisions",
+        user_id="user_123",
+        memory_source="ltm",
+        date_range="last week", # RFC3339 format is preferred
+        limit=3,
+    )
+    # Returns: GraphQL migration (within date range)
+
+    # Strategy 4: Specific month search
+    results_4 = memory_system.search(
+        "planning",
+        user_id="user_123",
+        memory_source="ltm",
+        date_range="2024-01", # from 2024-01-01 to current date (RFC3339 format is preferred)
+        limit=3,
+    )
+    # Returns: Q1 performance optimization (January only)
+
+
+except Exception as e:
+    print(f"Error initializing Cortex: {e}")
+    print("Please check your API key and environment setup")
+
+def get_results(results):
     if results:
         print("Found relevant memories:")
         for result in results:
             print(f"Content: {result['content']}")
             print(f"Relevance: {result['score']:.3f}")
-            # Check if temporal weighting was applied
-            if hasattr(result, 'temporal_weighted'):
+            # if temporal weighting was applied
+            if result.get('temporal_weighted'):
                 print(f"Recency: {result.get('recency_score', 'N/A'):.3f}")
-            print("---")
+            print("\n")
     else:
         print("No relevant memories found")
 
-except Exception as e:
-    print(f"Error initializing Cortex: {e}")
-    print("Please check your API key and environment setup")
+
+print("\nResults for: programming preferences (most semantically relevant)")
+get_results(results_1)
+print("\n---\nResults for: what did we discuss yesterday? (70% recency, 30% semantic)")
+get_results(results_2)
+print("\n---\nResults for: team decisions (all memories from last week)")
+get_results(results_3)
+print("\n---\nResults for: planning (from January 2024)")
+get_results(results_4)
+
 ```
 
 ### Custom Usage Examples
@@ -196,7 +250,8 @@ memory_system.add_note(
 # Retrieve within user context
 results = memory_system.search_memory(
     query="user interface preferences",
-    user_id="user123"
+    user_id="user123",
+    session_id="session456"
 )
 ```
 
@@ -327,11 +382,12 @@ Cortex includes a command-line interface for processing text files and managing 
 # Process a text file and store memories
 python -m cortex.main --input-file data/knowledge.txt
 
-# Load pre-stored memories
-python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
-
 # Query existing memories
 python -m cortex.main --query "What is machine learning?" --limit 5
+
+# Load pre-stored local memories from json files
+python -m cortex.main --stm-json stm_memories.json --ltm-json ltm_memories.json --skip-storage
+
 ```
 
 #### Test CLI Parameters

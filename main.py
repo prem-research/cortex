@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 import json
 import logging
 import os
+import sys
 import time
 import argparse
 from cortex.memory_system import AgenticMemorySystem
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv(".env")
 
 
-logging.basicConfig(level=logging.DEBUG)  # Changed to DEBUG for detailed logging
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 def _parse_date_range(date_str: str) -> Optional[Dict[str, str]]:
@@ -95,7 +96,7 @@ memory_system = AgenticMemorySystem(
 )  
 
 # for text splitting (before storing into memory)
-CHUNK_SIZE = 6000  # Characters per chunk
+CHUNK_SIZE = 2000  # Characters per chunk
 CHUNK_OVERLAP = 200  # Overlap between chunks
 
 class MemoryInput(BaseModel):
@@ -135,6 +136,24 @@ class RetrieveResponse(BaseModel):
     """Response model for the retrieve endpoint"""
     memories: List[MemoryOutput]
     count: int
+
+def _safe_parse_tags(tags_value):
+    """Safely parse tags that might be strings or lists"""
+    if isinstance(tags_value, list):
+        return tags_value
+    elif isinstance(tags_value, str):
+        try:
+            # Try to parse as JSON if it looks like a JSON array
+            if tags_value.strip().startswith('[') and tags_value.strip().endswith(']'):
+                return json.loads(tags_value)
+            else:
+                # Split by comma if it's a simple string
+                return [tag.strip() for tag in tags_value.split(',') if tag.strip()]
+        except json.JSONDecodeError:
+            # If JSON parsing fails, split by comma
+            return [tag.strip() for tag in tags_value.split(',') if tag.strip()]
+    else:
+        return []
 
 def store_memory(memory: MemoryInput) -> StoreResponse:
     """
@@ -261,10 +280,14 @@ def retrieve_memories(
             
         seen_ids.add(memory_id)
         
+        # Safely parse tags
+        tags_value = result.get("tags", [])
+        parsed_tags = _safe_parse_tags(tags_value)
+        
         memory_output = {
             "id": memory_id,
             "context": result.get("context", ""),
-            "tags": result.get("tags", []),
+            "tags": parsed_tags,
             "timestamp": str(result.get("timestamp", "")),  # Convert timestamp to string
             "score": result.get("score"),
             "is_linked": False,
@@ -389,10 +412,13 @@ def _create_linked_memory_output(
 ) -> Dict[str, Any]:
 
     # Get memory attributes safely
+    tags_value = getattr(linked_memory, "tags", [])
+    parsed_tags = _safe_parse_tags(tags_value)
+    
     link_output = {
         "id": link_id,
         "context": getattr(linked_memory, "context", ""),
-        "tags": getattr(linked_memory, "tags", []),
+        "tags": parsed_tags,
         "timestamp": str(getattr(linked_memory, "timestamp", "")),  # Convert timestamp to string
         "score": None,
         "is_linked": True,
@@ -540,11 +566,15 @@ def retrieve_memories_with_collection_analytics(
     # Format memories with full details
     formatted_memories = []
     for result in results:
+        # Safely parse tags
+        tags_value = result.get("tags", [])
+        parsed_tags = _safe_parse_tags(tags_value)
+        
         memory_data = {
             "id": result.get("id", ""),
             "content": result.get("content", ""),
             "context": result.get("context", ""),
-            "tags": result.get("tags", []),
+            "tags": parsed_tags,
             "keywords": result.get("keywords", []),
             "timestamp": str(result.get("timestamp", "")),
             "score": result.get("score"),
@@ -805,6 +835,10 @@ def get_ltm_memories(user_id=None, session_id=None):
             mem_note = memory_system.memories.get(result["id"])
             result["keywords"] = getattr(mem_note, "keywords", [])
             
+        # Safely parse tags
+        tags_value = result.get("tags", [])
+        result["tags"] = _safe_parse_tags(tags_value)
+        
         # Convert to MemoryOutput for consistent format
         memory_out = MemoryOutput(**result)
         memories.append(memory_out)
@@ -931,15 +965,68 @@ def load_memories_from_json(stm_json_path=None, ltm_json_path=None):
     
     return stm_memories, ltm_memories
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Run the memory system with Lyra content')
+def run_single_query(query: str, limit: int = 3, user_id: str = "default", session_id: str = "default") -> None:
+    """
+    Run a single query and display results
+    """
+    print(f"\n=== Query: '{query}' ===")
+    
+    try:
+        # Perform search
+        response = retrieve_memories(
+            q=query,
+            limit=limit,
+            user_id=user_id,
+            session_id=session_id,
+            memory_source="ltm"
+        )
+        
+        if response.count == 0:
+            print("No results found.")
+            return
+        
+        print(f"Found {response.count} results:")
+        print("-" * 80)
+        
+        for i, memory in enumerate(response.memories, 1):
+            score_display = f"{memory.score:.3f}" if memory.score is not None else "None"
+            category_info = memory.category or 'No Category'
+            
+            print(f"{i}. Score: {score_display} | Tier: {memory.memory_tier} | Category: {category_info}")
+            print(f"   Content: {memory.content[:500]}{'...' if len(memory.content) > 500 else ''}")
+            
+            if memory.tags:
+                print(f"   Tags: {', '.join(memory.tags)}")
+            if memory.timestamp:
+                print(f"   Timestamp: {memory.timestamp}")
+            
+            print()
+        
+        print("-" * 80)
+        
+    except Exception as e:
+        print(f"Error during query: {e}")
+        logger.error(f"Query error: {e}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Run the memory system with various options')
     parser.add_argument('--stm-json', type=str, help='Path to pre-stored STM memories JSON file')
     parser.add_argument('--ltm-json', type=str, help='Path to pre-stored LTM memories JSON file')
-    parser.add_argument('--input-file', type=str, default="examples/lyra/lyra.txt", help='Path to the input text file (default: ../lyra.txt)')
-    parser.add_argument('--queries-file', type=str, default="examples/lyra/queries.json", help='Path to the queries file (default: examples/lyra/queries.json)')
-    parser.add_argument('--output-dir', type=str, default="examples/lyra", help='Path to the output directory (default: examples/lyra)')
+    parser.add_argument('--input-file', type=str, help='Path to the input text file (default: examples/lyra/lyra.txt)')
+    parser.add_argument('--queries-file', type=str, help='Path to the queries file (default: examples/lyra/queries.json)')
+    parser.add_argument('--output-dir', type=str, default="examples/", help='Path to the output directory (default: examples/lyra)')
     parser.add_argument('--skip-storage', action='store_true', help='Skip storing segments and go directly to queries')
+    parser.add_argument('--query', type=str, help='Single query to run')
+    parser.add_argument('--limit', type=int, default=5, help='Maximum number of results to return (default: 5)')
+    parser.add_argument('--user-id', type=str, default="default", help='User ID for memory segregation (default: default)')
+    parser.add_argument('--session-id', type=str, default="default", help='Session ID for memory segregation (default: default)')
+    
     args = parser.parse_args()
+    
+    # Handle single query mode
+    if args.query:
+        run_single_query(args.query, args.limit, args.user_id, args.session_id)
+        sys.exit(0)
     
     # Check if we should load from JSON files (not needed if --skip-storage is used, not required for first run)
     stm_memories = []
@@ -954,9 +1041,9 @@ if __name__ == "__main__":
         lyra_segments = extract_segments_from_file(args.input_file)
         print(f"Extracted {len(lyra_segments)} segments from {args.input_file}")
         
-        # Define user and session for Lyra data
-        user = "testuser1"
-        session = "testsession1"
+        # Define user and session for data
+        user = args.user_id
+        session = args.session_id
         
         # Initialize collection tracking
         collection_evolution = []
@@ -1005,11 +1092,12 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Error storing segment: {e}")
         
-        print(f"\n=== Successfully stored {stored_count} segments of Lyra content ===\n")
+        print(f"\n=== Successfully stored {stored_count} segments of content ===\n")
         
         # Save collection evolution data
         if collection_evolution:
             evolution_file = os.path.join(args.output_dir, "collection_evolution.json")
+            os.makedirs(args.output_dir, exist_ok=True)
             with open(evolution_file, 'w', encoding='utf-8') as f:
                 json.dump(collection_evolution, f, indent=2)
             print(f"Collection evolution saved to: {evolution_file}")
@@ -1019,12 +1107,18 @@ if __name__ == "__main__":
     elif args.skip_storage:
         print("=== Skipping storage phase as requested ===")
     
-    # Example queries for Lyra content
+    # Check for queries file - if it doesn't exist, exit gracefully
+    if not args.queries_file or not os.path.exists(args.queries_file):
+        print(f"Queries file not found: {args.queries_file}")
+        print("Either specify --query for single query or provide a valid queries file")
+        sys.exit(0)
+    
+    # Example queries from file
     fetched_queries = json.load(open(args.queries_file))
     
     # Define user and session for queries
-    user = "testuser1"
-    session = "testsession1"
+    user = args.user_id
+    session = args.session_id
     
     print(f"=== Testing memory retrieval with {len(fetched_queries)} queries ===")
     
@@ -1039,6 +1133,9 @@ if __name__ == "__main__":
     display_collection_summary()
     
     print("\n=== Saving memory contents to JSON files ===")
+    
+    # Ensure output directory exists
+    os.makedirs(args.output_dir, exist_ok=True)
     
     # Get and save STM memories for rerun later if req (use --stm-json with correct path to previously saved stm_memories.json to skip)
     if not args.stm_json:
@@ -1158,4 +1255,5 @@ if __name__ == "__main__":
     print("   • Detailed collection snapshots at each query")
     print("   • Category distribution and pattern analysis")
 
-
+if __name__ == "__main__":
+    main()

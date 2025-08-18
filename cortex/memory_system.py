@@ -30,7 +30,7 @@ class AgenticMemorySystem:
                  llm_model: str = DEFAULT_LLM_MODEL,
                  stm_capacity: int = DEFAULT_STM_CAPACITY,
                  api_key: Optional[str] = None,
-                 enable_smart_collections: bool = False,
+                 enable_smart_collections: bool = True,
                  enable_background_processing: bool = True,
                  chroma_uri: str = DEFAULT_CHROMA_URI):  
         if api_key is None:
