@@ -1,4 +1,4 @@
-# Cortex: Advanced Memory System for AI Agents
+# Prem Cortex: Advanced Memory System for AI Agents
 
 A memory system for AI agents that stores, retrieves, and evolves information over time. Inspired by human cognitive architecture with dual-tier memory (STM/LTM) and intelligent evolution capabilities.
 
