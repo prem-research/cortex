@@ -451,33 +451,65 @@ graph TD
 
 ### 🔄 Memory Flow Process
 
+#### Storage Flow
+
 ```mermaid
 sequenceDiagram
-    participant User
     participant Agent
+    participant MS as Memory System
+    participant LP as Light Processor
+    participant DP as Deep Processor
     participant STM as Short-Term Memory
-    participant LTM as Long-Term Memory
-    participant Processor
+    participant LTM as Long-Term Memory (VectorDB)
+    participant CM as Collection Manager
+    participant BG as Background Evolution
     
-    User->>Agent: Provide new information
-    Agent->>Processor: Process content
-    Processor->>STM: Store with light processing
-    Processor->>LTM: Store with deep processing
+    Agent->>MS: add_note(content, user_id, session_id)
+    MS->>LP: Light processing (keywords, tags)
+    LP-->>MS: Enhanced metadata
+    MS->>STM: Store immediately with metadata
+    MS->>BG: Queue for background LTM processing
     
-    User->>Agent: Query for information
-    Agent->>STM: Search for relevant memories
-    Agent->>LTM: Search for relevant memories
-    STM-->>Agent: Return matches
-    LTM-->>Agent: Return matches
-    Agent->>Processor: Combine and rank results
-    Agent->>User: Respond with retrieved information
-    
-    loop Memory Evolution
-        STM->>Processor: Check for connections
-        LTM->>Processor: Check for connections
-        Processor->>STM: Update connections
-        Processor->>LTM: Update connections
+    par Background LTM Processing
+        BG->>DP: Deep analysis (category, relationships)
+        DP-->>BG: Rich metadata + category
+        BG->>LTM: Persist to VectorDB collection
+        BG->>CM: Update smart collections
+        BG->>BG: Process memory evolution & linking
     end
+    
+    MS-->>Agent: Memory stored (immediate STM + background LTM)
+```
+
+#### Retrieval Flow
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant MS as Memory System
+    participant STM as Short-Term Memory
+    participant LTM as Long-Term Memory (VectorDB)
+    participant CM as Collection Manager
+    
+    Agent->>MS: search_memory(query, temporal_weight, date_range)
+    MS->>MS: Parse date_range, build temporal filter
+    
+    par Hybrid Search
+        MS->>STM: Search recent memories (if no date_range)
+        STM-->>MS: STM results
+        MS->>LTM: Search persistent memories with temporal filter
+        LTM-->>MS: LTM results
+        opt Smart Collections Enabled
+            MS->>CM: Discover relevant collections for query
+            CM-->>MS: Top collections + transformed queries
+            MS->>LTM: Collection-aware search
+            LTM-->>MS: Collection-specific results
+        end
+    end
+    
+    MS->>MS: Apply temporal weighting & merge results
+    MS->>MS: Retrieve linked memories via evolution graph
+    MS-->>Agent: Ranked, temporally-aware results
 ```
 
 ## 📦 Components
