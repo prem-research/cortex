@@ -2,6 +2,9 @@
 
 A memory system for AI agents that stores, retrieves, and evolves information over time. Inspired by human cognitive architecture with dual-tier memory (STM/LTM) and intelligent evolution capabilities.
 
+<img src="https://raw.githubusercontent.com/prem-research/cortex/refs/heads/main/prem.png" alt="Cortex Memory Graph" width="25%" />
+
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
