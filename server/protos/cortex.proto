@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package cortex;
+
+// Memory service definition for gRPC
+service MemoryService {
+  // Store a new memory
+  rpc StoreMemory(StoreMemoryRequest) returns (StoreMemoryResponse);
+  
+  // Search for memories
+  rpc SearchMemories(SearchMemoryRequest) returns (SearchMemoryResponse);
+  
+  // Delete a memory
+  rpc DeleteMemory(DeleteMemoryRequest) returns (DeleteMemoryResponse);
+  
+  // Update a memory
+  rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
+  
+  // Clear memories
+  rpc ClearMemories(ClearMemoryRequest) returns (ClearMemoryResponse);
+  
+  // Get memory by ID
+  rpc GetMemory(GetMemoryRequest) returns (GetMemoryResponse);
+}
+
+// Request/Response messages
+message StoreMemoryRequest {
+  string content = 1;
+  string context = 2;
+  repeated string tags = 3;
+  string timestamp = 4;
+  string user_id = 5;
+  string session_id = 6;
+  map<string, string> metadata = 7;
+}
+
+message StoreMemoryResponse {
+  string id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+message SearchMemoryRequest {
+  string query = 1;
+  int32 limit = 2;
+  string memory_source = 3;
+  string context = 4;
+  repeated string tags = 5;
+  bool exclude_content = 6;
+  bool include_links = 7;
+  bool apply_postprocessing = 8;
+  string user_id = 9;
+  string session_id = 10;
+  float temporal_weight = 11;
+  string date_range = 12;
+}
+
+message Memory {
+  string id = 1;
+  string content = 2;
+  string context = 3;
+  repeated string tags = 4;
+  repeated string keywords = 5;
+  string timestamp = 6;
+  float score = 7;
+  bool is_linked = 8;
+  string memory_tier = 9;
+  string collection_name = 10;
+  string category = 11;
+  float composite_score = 12;
+  string relationship_type = 13;
+  float relationship_strength = 14;
+  string relationship_reason = 15;
+}
+
+message SearchMemoryResponse {
+  repeated Memory memories = 1;
+  int32 count = 2;
+  map<string, string> query_metadata = 3;
+}
+
+message DeleteMemoryRequest {
+  string memory_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+}
+
+message DeleteMemoryResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message UpdateMemoryRequest {
+  string memory_id = 1;
+  string content = 2;
+  string context = 3;
+  repeated string tags = 4;
+  map<string, string> metadata = 5;
+}
+
+message UpdateMemoryResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ClearMemoryRequest {
+  string memory_source = 1;
+  string user_id = 2;
+  string session_id = 3;
+}
+
+message ClearMemoryResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetMemoryRequest {
+  string memory_id = 1;
+  string user_id = 2;
+  string session_id = 3;
+}
+
+message GetMemoryResponse {
+  Memory memory = 1;
+  bool found = 2;
+}

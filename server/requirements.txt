@@ -1,0 +1,49 @@
+# FastAPI and web server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+gunicorn==21.2.0
+
+# OpenAPI and documentation
+python-multipart==0.0.6
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Authentication
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+
+# gRPC
+grpcio==1.60.0
+grpcio-tools==1.60.0
+grpcio-reflection==1.60.0
+protobuf==4.25.2
+
+# Cortex dependencies (from parent project)
+chromadb==0.4.22
+sentence-transformers==2.2.2
+litellm==1.16.11
+openai==1.3.7
+numpy==1.24.3
+langchain==0.2.0
+
+# Database for API keys management
+sqlalchemy==2.0.25
+alembic==1.13.1
+asyncpg==0.29.0
+
+# Monitoring and logging
+prometheus-client==0.19.0
+structlog==24.1.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.21.1
+httpx==0.26.0
+
+# Redis for rate limiting and caching
+redis==5.0.1
+hiredis==2.3.2
+
+# CORS support
+fastapi-cors==0.0.6
