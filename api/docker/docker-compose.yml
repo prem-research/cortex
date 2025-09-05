@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.4.24
+    ports:
+      - "7003:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - IS_PERSISTENT=TRUE
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request, urllib.error; urllib.request.urlopen(\"http://0.0.0.0:8000/api/v1/heartbeat\", timeout=5)' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: cortex_api
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "7432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  cortex-api:
+    build:
+      context: ../../
+      dockerfile: api/docker/Dockerfile
+    ports:
+      - "7001:7001"
+    env_file:
+      - ../.env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/cortex_api
+      - CHROMA_URI=http://chromadb:8000
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   chromadb:
+    #     condition: service_healthy
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -f http://localhost:7001/health || exit 1"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+  chroma_data:
+    driver: local
+    driver_opts:
+      type: none  
+      o: bind
+      device: ./data/chroma
