@@ -19,19 +19,14 @@ A comprehensive guide for testing and using the Cortex Memory API with detailed 
 2. **Health Check**: Verify with `make health` that all services are healthy
 3. **Tools**: Have `curl` and `jq` (optional, for JSON formatting) available
 
-## Authentication Methods
+## Authentication Method
 
-The API supports two authentication methods:
+The API uses JWT Bearer token authentication:
 
-### 1. JWT Tokens (Recommended)
+### JWT Tokens
 - Login to get a JWT token
 - Include in `Authorization: Bearer <token>` header
-- Tokens expire and can be refreshed
-
-### 2. API Keys
-- Generated during user registration
-- Include in `X-API-Key: <key>` header
-- Persistent until manually revoked
+- Tokens are valid for 365 days
 
 ## Complete Testing Workflow
 
@@ -71,12 +66,9 @@ curl -X POST "http://localhost:7001/api/v1/auth/register" \
   "id": 1,
   "username": "demo_user",
   "email": "demo@example.com",
-  "api_key": "gKyQ8ympdaAI8xZFzXstA0ScGQhAEl3Rjac6yC-XsX4xDB5ARGQfb2f-Fx-lhMqx",
   "is_active": true
 }
 ```
-
-💡 **Save the API key** from the response for later use!
 
 ### Step 3: Authentication Testing
 ```bash
@@ -93,14 +85,14 @@ curl -X POST "http://localhost:7001/api/v1/auth/login" \
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
+  "token_type": "bearer",
+  "user_id": "1"
 }
 ```
 
 ```bash
 # Save the JWT token for subsequent requests
 export JWT_TOKEN="your-jwt-token-here"
-export API_KEY="your-api-key-here"
 
 # Test token validation
 curl -X GET "http://localhost:7001/api/v1/auth/me" \
@@ -250,29 +242,7 @@ curl -X POST "http://localhost:7001/api/v1/memory/get-with-linked" \
   }'
 ```
 
-### Step 7: API Key Authentication Testing
-
-```bash
-# Add memory using API key instead of JWT token
-curl -X POST "http://localhost:7001/api/v1/memory/add" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "content": "Testing API key authentication method. This should work without JWT tokens.",
-    "metadata": {"auth_method": "api_key"}
-  }'
-
-# Search using API key
-curl -X POST "http://localhost:7001/api/v1/memory/search" \
-  -H "X-API-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "API key test",
-    "limit": 5
-  }'
-```
-
-### Step 8: Memory Management
+### Step 7: Memory Management
 
 ```bash
 # Clear memories (use with caution - this will delete data!)
@@ -416,8 +386,7 @@ curl -X POST "http://localhost:7001/api/v1/memory/search" \
 - Use appropriate limits to balance performance and completeness
 
 ### 4. Authentication Security
-- Store JWT tokens securely and refresh before expiration
-- Use API keys for server-to-server communication
+- Store JWT tokens securely and refresh before expiration (tokens valid for 365 days)
 - Never expose authentication credentials in logs or client-side code
 
 ## Troubleshooting
@@ -425,8 +394,8 @@ curl -X POST "http://localhost:7001/api/v1/memory/search" \
 ### Common Issues
 
 #### 401 Unauthorized
-**Cause**: Invalid or expired JWT token, missing API key
-**Solution**: Re-login to get fresh token or verify API key
+**Cause**: Invalid or expired JWT token
+**Solution**: Re-login to get fresh token
 
 #### 422 Validation Error
 **Cause**: Malformed request body or missing required fields
