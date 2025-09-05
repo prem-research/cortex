@@ -179,3 +179,5 @@ evaluation/memory_state/**
 evaluation/dataset/**
 .env
 chroma_data/
+api/.env
+api/docker/data/**
