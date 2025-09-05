@@ -9,7 +9,7 @@ A production-ready API service for the Cortex memory system with multi-user auth
 - **Temporal Awareness**: Time-sensitive search with recency weighting
 - **Memory Evolution**: Automatic relationship building between memories
 - **Multi-user Support**: Complete isolation by user_id and session_id
-- **JWT + API Key Authentication**: Flexible authentication options
+- **JWT Bearer Authentication**: Secure token-based authentication
 - **Docker Deployment**: Production-ready containerization
 
 ## Quick Start
@@ -36,12 +36,14 @@ JWT_SECRET_KEY=your-secret-key-here
 ### 3. Start Services
 
 ```bash
-# Start all services (ChromaDB, PostgreSQL, Cortex API)
-cd docker
-docker-compose up -d
+# Build and start all services
+make build
+
+# Start services
+make up
 
 # Check service health
-curl http://localhost:7001/api/v1/health
+make health
 ```
 
 ### 4. API Documentation
@@ -116,17 +118,6 @@ curl -X POST "http://localhost:7001/api/v1/memory/search" \
   }'
 ```
 
-### Using API Keys
-
-Instead of JWT tokens, you can use API keys:
-
-```bash
-curl -X POST "http://localhost:7001/api/v1/memory/add" \
-  -H "X-API-Key: YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Meeting notes..."}'
-```
-
 ## Configuration
 
 ### Environment Variables
@@ -192,9 +183,7 @@ Filter by specific time periods:
 ```json
 {
   "query": "team meetings",
-  "date_range": "yesterday",           // Natural language
-  "date_range": "2024-01",            // Month
-  "date_range": "2024-01-15T10:00:00Z" // Specific timestamp
+  "date_range": "{\"start\": \"2024-01-01T00:00:00Z\", \"end\": \"2024-01-31T23:59:59Z\"}"
 }
 ```
 
@@ -216,7 +205,7 @@ Filter by custom metadata:
 pip install -r requirements.txt
 
 # Start ChromaDB and PostgreSQL
-docker-compose up -d chromadb postgres
+make services
 
 # Run API server locally
 uvicorn app.main:app --reload --port 7001
@@ -237,6 +226,8 @@ api/
 │   ├── Dockerfile
 │   └── docker-compose.yml
 ├── requirements.txt
+├── Makefile
+├── USAGE.md
 └── README.md
 ```
 
